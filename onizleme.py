@@ -161,6 +161,7 @@ try:
             t0 = _t.time()
             while _t.time() - t0 < 25 and getattr(w.atlas_yuzen, 'bekleyen', None): app.processEvents(); _t.sleep(0.1)
             for _ in range(10): app.processEvents()
+            w.atlas_yuzen.balon_goster('Tahtaya y = 2x − 3 ve y = x² yazdınız. Ne yapayım?', ['Grafiklerini çiz', 'Kesişimini bul', 'Köklerini hesapla', 'Başka bir şey sor…']); app.processEvents(); app.processEvents()
             w.grab().save('/tmp/onizleme/atlas-dokun.png'); print('balon:', w.atlas_yuzen.balon.yazi.text()[:200], [b_.text() for b_ in w.atlas_yuzen.balon.dug])
         except Exception: _tb.print_exc()
         for _ in range(20): app.processEvents()

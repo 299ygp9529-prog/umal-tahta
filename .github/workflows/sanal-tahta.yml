@@ -48,7 +48,10 @@ jobs:
           x11vnc -storepasswd "$VNC_SIFRE" /tmp/vncpass >/dev/null
           x11vnc -display :1 -rfbauth /tmp/vncpass -forever -shared -rfbport 5900 -bg -quiet -o /tmp/x11vnc.log
           setsid nohup websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/ws.log 2>&1 &
-          setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & sleep 25
+          mkdir -p /root/Belgeler; cp pdf/*.pdf /root/Belgeler/ 2>/dev/null || true
+          ILK=$(ls /root/Belgeler/*.pdf 2>/dev/null | head -1)
+          if [ -n "$ILK" ]; then setsid nohup umal-tahta "$ILK" > /tmp/tahta.log 2>&1 & else setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & fi
+          sleep 25
           import -window root /tmp/ilk.png || true
           tail -20 /tmp/tahta.log || true
       - name: Önizlemeler

@@ -36,7 +36,7 @@ jobs:
           open(p, 'w', encoding='utf-8').write(s)
           PY
           grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
-          mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
+          mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "SANAL"}' > /root/.local/share/umal-tahta/tahta.json
       - name: Ekran ve tahta
         run: |
           # Şifre burada üretilir; yalnız Claude'un açık anahtarıyla şifrelenmiş hâli durum dalına yazılır.

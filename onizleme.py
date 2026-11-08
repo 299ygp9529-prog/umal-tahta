@@ -34,7 +34,7 @@ pn.cevap = CEVAP; pn.metin.setPlainText(CEVAP, True); pn.yaz_b.setEnabled(True);
 pn.grafik = ['2*x']; pn.grafik_b.show(); pn.maskot.ifade('konusma'); pn.durum.setText('Bugün 4 / 30')
 pn.yerlestir(); ana.show(); app.processEvents(); app.processEvents()
 ana.grab().save('/tmp/onizleme/panel.png')
-pn.klavye.attach(pn.giris); pn.klavye.show(); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye.png'); pn.klavye.matematik(True); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye-mat.png'); pn.klavye.matematik(False); pn.klavye.hide(); app.processEvents()
+gk = tk.GenisKlavye(ana); gk.ac(pn.giris); pn.giris.setText('x² − 4x + 3 = 0 kökleri'); gk.esitle(); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye.png'); gk.kb.matematik(True); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye-mat.png'); gk.kb.matematik(False); gk.hide(); pn.giris.clear(); app.processEvents()
 pn.tam_ekran(True); app.processEvents(); app.processEvents(); pn.metin._ciz(); app.processEvents()
 ana.grab().save('/tmp/onizleme/tam-ekran.png')
 # Tahtaya yaz: gerçek kalem çizgileri

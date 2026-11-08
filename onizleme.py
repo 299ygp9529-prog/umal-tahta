@@ -146,6 +146,22 @@ try:
             [getattr(w, n_).hide() for n_ in ('welcome', 'intro') if getattr(w, n_, None) is not None]; w.atlas_yuzen.durum(); w.place_overlays(); app.processEvents(); w.grab().save('/tmp/onizleme/panel-yeni.png')
             w.open_folder(w.tools_popup, w.tools_button); app.processEvents(); w.tools_popup.grab().save('/tmp/onizleme/araclar-menu.png'); w.tools_popup.hide()
             print('maskot görünür:', w.atlas_yuzen.isVisible(), w.atlas_yuzen.geometry())
+            # K-367: dokununca ekrandaki yazıya bakar (gerçek Atlas çağrısı)
+            w.start_tab('Boş', None) if False else None
+            bos = tk.make_board('kt_kareli', 960, 1080); w.replace(bos, persist=False); w.marks = {0: []}
+            import math as _m
+            def cizgi(pts): w.marks[0].append(dict(tool='pen', color='#ffffff', width=3, points=[list(q) for q in pts]))
+            F = '/usr/share/tahta-kalem/fonts/ReliefSingleLineSVG-Regular.svg'
+            cz, _h = tk.murekkep_cizgileri('y = 2x − 3\ny = x²', 600, 56, '#ffffff', 3, F, tk.atlas_guzel)
+            for c in cz: w.marks[0].append(dict(c, points=[[q[0] + 120, q[1] + 140] for q in c['points']]))
+            w.board.update(); [getattr(w, n_).hide() for n_ in ('welcome', 'intro') if getattr(w, n_, None) is not None]
+            for _ in range(10): app.processEvents()
+            w.atlas_yuzen.durum(); w.atlas_yuzen.dokundu()
+            import time as _t
+            t0 = _t.time()
+            while _t.time() - t0 < 25 and getattr(w.atlas_yuzen, 'bekleyen', None): app.processEvents(); _t.sleep(0.1)
+            for _ in range(10): app.processEvents()
+            w.grab().save('/tmp/onizleme/atlas-dokun.png'); print('balon:', w.atlas_yuzen.balon.yazi.text()[:200], [b_.text() for b_ in w.atlas_yuzen.balon.dug])
         except Exception: _tb.print_exc()
         for _ in range(20): app.processEvents()
         sy = w.doc[0].rect

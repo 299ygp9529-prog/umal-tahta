@@ -1,0 +1,79 @@
+# Sanal tahta: Atlas'ı Debian 12'de (Pardus 23'ün temeli) gerçek Qt ile açar; tarayıcıdan noVNC ile kullanılır.
+# Okul verisi yok: Supabase okul çağrıları ve Drive ayarı devre dışı; yalnız "Atlas'a sor" DENEME sınıfıyla çalışır.
+name: Sanal tahta
+on:
+  push:
+    branches: [sanal-tahta]
+  workflow_dispatch:
+    inputs:
+      sure:
+        description: "Açık kalma süresi (dakika)"
+        default: "180"
+permissions: { contents: write }
+concurrency: { group: sanal-tahta, cancel-in-progress: true }
+jobs:
+  tahta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kurulum
+        env: { DEBIAN_FRONTEND: noninteractive }
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ./umal-tahta_*_amd64.deb xvfb x11vnc novnc python3-websockify openbox curl ca-certificates \
+            fonts-dejavu locales imagemagick x11-utils dbus-x11 libgl1 libegl1 git openssl >/dev/null
+          sed -i 's/^# *tr_TR.UTF-8/tr_TR.UTF-8/' /etc/locale.gen && locale-gen >/dev/null
+      - name: Okul verisini kapat
+        run: |
+          rm -f /usr/share/tahta-kalem/havuz/rclone.conf
+          python3 - <<'PY'
+          p = '/usr/lib/umal-tahta/umal-havuz'; s = open(p, encoding='utf-8').read()
+          s = s.replace('def yonetim(fonksiyon, govde, timeout=60):\n', 'def yonetim(fonksiyon, govde, timeout=60):\n    raise RuntimeError("sanal tahta: okul verisi kapalı")\n', 1)
+          s = s.replace('def indir(adres, hedef, timeout=900):\n', 'def indir(adres, hedef, timeout=900):\n    raise RuntimeError("sanal tahta: indirme kapalı")\n', 1)
+          s = s.replace("    veri['anahtar'] = YONETIM_ANAHTAR\n", "    veri['anahtar'] = YONETIM_ANAHTAR; veri['sinif'] = 'DENEME'\n", 1)
+          open(p, 'w', encoding='utf-8').write(s)
+          PY
+          grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
+          mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
+      - name: Ekran ve tahta
+        run: |
+          # Şifre burada üretilir; yalnız Claude'un açık anahtarıyla şifrelenmiş hâli durum dalına yazılır.
+          VNC_SIFRE=$(tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' < /dev/urandom | head -c 8); echo "::add-mask::$VNC_SIFRE"
+          printf %s "$VNC_SIFRE" | openssl pkeyutl -encrypt -pubin -inkey sanal-acik.pem | base64 -w0 > /tmp/sifre.enc
+          export DISPLAY=:1 LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
+          setsid nohup Xvfb :1 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & sleep 2
+          setsid nohup openbox >/tmp/openbox.log 2>&1 & sleep 1
+          x11vnc -storepasswd "$VNC_SIFRE" /tmp/vncpass >/dev/null
+          x11vnc -display :1 -rfbauth /tmp/vncpass -forever -shared -rfbport 5900 -bg -quiet -o /tmp/x11vnc.log
+          setsid nohup websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/ws.log 2>&1 &
+          setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & sleep 25
+          import -window root /tmp/ilk.png || true
+          tail -20 /tmp/tahta.log || true
+      - name: Bağlantı
+        run: |
+          curl -sSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared
+          setsid nohup cloudflared tunnel --no-autoupdate --url http://localhost:6080 > /tmp/cf.log 2>&1 &
+          for i in $(seq 60); do U=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -1); [ -n "$U" ] && break; sleep 2; done
+          echo "ADRES: $U/vnc.html?autoconnect=1&resize=scale"
+          echo "### Sanal tahta: $U/vnc.html?autoconnect=1&resize=scale" >> $GITHUB_STEP_SUMMARY
+          echo "$U/vnc.html?autoconnect=1&resize=scale" > /tmp/adres.txt
+      - name: Durumu yaz
+        run: |
+          mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-tahta-durum
+          cp /tmp/adres.txt /tmp/sifre.enc . ; cp /tmp/ilk.png . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
+          date -u +%FT%TZ > zaman.txt
+          git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-tahta-durum
+      - name: Görüntü yenile (5 dk boyunca dakikada bir)
+        run: |
+          cd /tmp/durum
+          for i in 1 2 3 4 5; do sleep 60; DISPLAY=:1 import -window root ilk.png || true; tail -40 /tmp/tahta.log > tahta.log; git add -A; git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "görüntü $i" || true; git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-tahta-durum || true; done
+      - name: Açık tut
+        run: |
+          S="${{ github.event.inputs.sure }}"; S=${S:-180}
+          end=$(( $(date +%s) + S*60 ))
+          while [ $(date +%s) -lt $end ]; do
+            sleep 300; pgrep -f tahta_kalem >/dev/null || (export DISPLAY=:1 LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8; setsid nohup umal-tahta >> /tmp/tahta.log 2>&1 &)
+          done

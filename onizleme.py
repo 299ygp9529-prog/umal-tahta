@@ -26,7 +26,7 @@ class Ana(QWidget):
     def exam_clock(self): return None
     def run_havuz(self, *a): pass
 os.makedirs('/tmp/onizleme', exist_ok=True)
-ana = Ana(); ana.resize(1920, 1080); ana.setStyleSheet('background:#0d1726;')
+ana = Ana(); ana.resize(1920, 1080); ana.setAutoFillBackground(True); pal = ana.palette(); pal.setColor(ana.backgroundRole(), QColor('#0d1726')); ana.setPalette(pal)
 pn = tk.AtlasPanel(ana); pn.ac(None)
 pn.cevap = CEVAP; pn.metin.setPlainText(CEVAP, True); pn.yaz_b.setEnabled(True); pn.tekrar_b.setEnabled(True); pn.derin_b.setEnabled(True)
 pn.grafik = ['2*x']; pn.grafik_b.show(); pn.maskot.ifade('konusma'); pn.durum.setText('Bugün 4 / 30')

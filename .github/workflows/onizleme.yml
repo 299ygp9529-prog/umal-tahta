@@ -53,7 +53,7 @@ jobs:
           tail -20 /tmp/tahta.log || true
       - name: Önizlemeler
         run: |
-          mkdir -p /tmp/onizleme; python3 onizleme.py > /tmp/onizleme-log.txt 2>&1 || true; tail -20 /tmp/onizleme-log.txt
+          mkdir -p /tmp/onizleme; timeout 300 python3 onizleme.py > /tmp/onizleme-log.txt 2>&1 || true; tail -20 /tmp/onizleme-log.txt
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum

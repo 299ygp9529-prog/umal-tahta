@@ -129,3 +129,31 @@ try:
     dl.grab().save('/tmp/onizleme/pencere-klavye.png')
 except Exception:
     import traceback; traceback.print_exc()
+# K-364: sayfada yer yoksa çözüm alanına
+try:
+    import glob, fitz
+    from PyQt5.QtCore import QRectF, QTimer
+    pdfler = sorted(glob.glob('pdf/*.pdf'))
+    if pdfler:
+        ana.hide()
+        w = tk.Window(); w.resize(1920, 1080); w.show(); app.processEvents()
+        for _ in range(30): app.processEvents()
+        for d_ in list(getattr(w, 'findChildren')(QWidget)):
+            pass
+        w.start_tab('Diziler', pdfler[0]); w.replace(fitz.open(pdfler[0]), pdfler[0]); w.tabs_changed()
+        for _ in range(20): app.processEvents()
+        sy = w.doc[0].rect
+        r = QRectF(sy.width*0.5, sy.height*0.80, sy.width*0.47, sy.height*0.12)   # alttaki soru: altında yer yok
+        w.atlas_son_cerceve = (0, r)
+        w.atlas_sor_ac(None); ap = w.atlas_panel
+        ap.cevap = r"""1. Aritmetik dizide $a_{n} = a_{3} + (n - 3)d$ kullanılır.
+2. $a_{5} = 7 + 2 \cdot (-2) = 3$
+Cevap: C) 3"""
+        ap.tahtaya_yaz()
+        import time
+        t0 = time.time()
+        while time.time() - t0 < 3: app.processEvents(); time.sleep(0.05)
+        w.grab().save('/tmp/onizleme/cozum-alani-atlas.png')
+        print('cozum alanı:', (w.doc.metadata or {}).get('keywords'), len(w.marks.get(0, [])))
+except Exception:
+    _tb.print_exc()

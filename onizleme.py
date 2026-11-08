@@ -98,6 +98,16 @@ try:
         w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); p.drawPixmap(g_[0], g_[1], w_.grab())
     p.drawPixmap(W - gi.width() - 24, 24, gi.grab()); at = gi.atlas.grab(); p.drawPixmap(W - at.width() - 250, H - at.height() - 40, at); p.end()
     im.save('/tmp/onizleme/grafik-tahta.png')
+    # grafik sekmesinin tamamı: üstte grafik, altta Atlas'ın el yazısı cevabı (üst üste binmez)
+    px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(1, 1), alpha=False); im2 = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()
+    cz2, _ = tk.murekkep_cizgileri(r"1. $y = x$ birim fonksiyondur." + "\n" + r"2. Orijinden geçer, eğimi $1$'dir." + "\n" + r"Cevap: $y = x$ birinci açıortay doğrusudur.", 820, 24, '#ffffff', 1.8, os.path.join(tk.UI_FONT_DIR, 'ReliefSingleLineSVG-Regular.svg'), tk.atlas_guzel)
+    p = QPainter(im2); p.setRenderHint(QPainter.Antialiasing)
+    for s_ in cz2:
+        p.setPen(QPen(QColor(s_['color']), s_['width'], Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); pts = s_['points']
+        path = QPainterPath(QPointF(pts[0][0] + 40, pts[0][1] + tk.GRAFIK_H + 16))
+        for x, y in pts[1:]: path.lineTo(x + 40, y + tk.GRAFIK_H + 16)
+        p.drawPath(path)
+    p.end(); im2.save('/tmp/onizleme/grafik-sekme-tam.png')
     for k in ('kok', 'ykes', 'asimptot', 'alan', 'teget'):
         d2 = {'f': ['x² − 4x + 3' if k != 'asimptot' else '1/(x-2)', '', ''], 'isaret': k, 'ek': {}}
         dd = tk.grafik_belge(d2); px = dd[0].get_pixmap(matrix=tk.fitz.Matrix(1.2, 1.2), alpha=False); px.save('/tmp/onizleme/grafik-%s.png' % k)

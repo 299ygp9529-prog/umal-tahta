@@ -34,7 +34,7 @@ pn.cevap = CEVAP; pn.metin.setPlainText(CEVAP, True); pn.yaz_b.setEnabled(True);
 pn.grafik = ['2*x']; pn.grafik_b.show(); pn.maskot.ifade('konusma'); pn.durum.setText('Bugün 4 / 30')
 pn.yerlestir(); ana.show(); app.processEvents(); app.processEvents()
 ana.grab().save('/tmp/onizleme/panel.png')
-pn.klavye.attach(pn.giris); pn.klavye.show(); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye.png'); pn.klavye.hide(); app.processEvents()
+gk = tk.GenisKlavye(ana); gk.ac(pn.giris); pn.giris.setText('x² − 4x + 3 = 0 kökleri'); gk.esitle(); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye.png'); gk.kb.matematik(True); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye-mat.png'); gk.kb.matematik(False); gk.hide(); pn.giris.clear(); app.processEvents()
 pn.tam_ekran(True); app.processEvents(); app.processEvents(); pn.metin._ciz(); app.processEvents()
 ana.grab().save('/tmp/onizleme/tam-ekran.png')
 # Tahtaya yaz: gerçek kalem çizgileri
@@ -114,4 +114,14 @@ try:
         dd = tk.grafik_belge(d2); px = dd[0].get_pixmap(matrix=tk.fitz.Matrix(1.2, 1.2), alpha=False); px.save('/tmp/onizleme/grafik-%s.png' % k)
     print('grafik tamam')
 except Exception as e:
+    import traceback; traceback.print_exc()
+# K-355: uygulamanın öteki pencerelerindeki klavye (ör. öğrenci arama)
+try:
+    from PyQt5.QtWidgets import QDialog, QLineEdit, QVBoxLayout, QLabel
+    dl = QDialog(); dl.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;font-size:24px;} QLineEdit{font-size:24px;padding:10px;background:#0a1628;color:white;border:2px solid #22e8ff;border-radius:12px;}')
+    vv = QVBoxLayout(dl); vv.setContentsMargins(30, 24, 30, 24); vv.addWidget(QLabel('Nerede sınava gireceğim?')); ed = QLineEdit('Ayşe'); vv.addWidget(ed)
+    kb = tk.attach_touch_keyboard(dl, ed, vv); kb.attach(ed); kb.show(); dl.resize(1100, 560); dl.show()
+    for _ in range(4): app.processEvents()
+    dl.grab().save('/tmp/onizleme/pencere-klavye.png')
+except Exception:
     import traceback; traceback.print_exc()

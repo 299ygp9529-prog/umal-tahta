@@ -142,6 +142,13 @@ try:
             pass
         w.start_tab('Diziler', pdfler[0]); w.replace(fitz.open(pdfler[0]), pdfler[0]); w.tabs_changed()
         for _ in range(20): app.processEvents()
+        try:
+            w.atlas_yuzen.durum(); w.place_overlays(); app.processEvents(); w.grab().save('/tmp/onizleme/panel-yeni.png')
+            w.open_folder(w.tools_popup, w.tools_button); app.processEvents(); w.tools_popup.grab().save('/tmp/onizleme/araclar-menu.png'); w.tools_popup.hide()
+            print('maskot görünür:', w.atlas_yuzen.isVisible(), w.atlas_yuzen.geometry())
+        except Exception: _tb.print_exc()
+         w.replace(fitz.open(pdfler[0]), pdfler[0]); w.tabs_changed()
+        for _ in range(20): app.processEvents()
         sy = w.doc[0].rect
         r = QRectF(sy.width*0.5, sy.height*0.80, sy.width*0.47, sy.height*0.12)   # alttaki soru: altında yer yok
         w.atlas_son_cerceve = (0, r)

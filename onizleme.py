@@ -6,6 +6,8 @@ spec = importlib.util.spec_from_file_location('tk', '/usr/share/tahta-kalem/taht
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QImage, QPainter, QColor, QPen, QPainterPath
 from PyQt5.QtCore import Qt, QPointF
+import traceback as _tb
+sys.excepthook = lambda t, v, b: _tb.print_exception(t, v, b)   # uygulamadaki gibi: hata Qt'yi düşürmesin
 app = QApplication(sys.argv); tk.ui_fonts()
 CEVAP = r"""y = 2x doğrusunu inceleyelim:
 • Bu doğru orijinden geçer ve eğimi $m = 2$'dir.

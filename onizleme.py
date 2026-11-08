@@ -144,6 +144,10 @@ try:
         for _ in range(20): app.processEvents()
         try:
             [getattr(w, n_).hide() for n_ in ('welcome', 'intro') if getattr(w, n_, None) is not None]; w.atlas_yuzen.durum(); w.place_overlays(); app.processEvents(); w.grab().save('/tmp/onizleme/panel-yeni.png')
+            yp = w.yeni_panel; yp.bolumler[0][0].setChecked(True); app.processEvents(); w.grab().save('/tmp/onizleme/panel-yeni-acik.png'); yp.bolumler[0][0].setChecked(False)
+            yp.sekme(1); app.processEvents(); w.grab(yp.geometry().adjusted(-4,-4,4,4) if False else w.rect()).save('/tmp/onizleme/panel-ekle.png')
+            yp.sekme(2); app.processEvents(); w.grab().save('/tmp/onizleme/panel-okul.png'); yp.sekme(0)
+            w.panel_daralt(True); app.processEvents(); app.processEvents(); w.place_overlays(); w.grab().save('/tmp/onizleme/panel-dar.png'); w.panel_daralt(False); app.processEvents()
             w.open_folder(w.tools_popup, w.tools_button); app.processEvents(); w.tools_popup.grab().save('/tmp/onizleme/araclar-menu.png'); w.tools_popup.hide()
             print('maskot görünür:', w.atlas_yuzen.isVisible(), w.atlas_yuzen.geometry())
             # K-367: dokununca ekrandaki yazıya bakar (gerçek Atlas çağrısı)

@@ -66,3 +66,39 @@ for bg in tk.KARA_TAHTALAR:
         w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); pm = w_.grab(); p.drawPixmap(g_[0], g_[1], pm)
     p.end(); im.save('/tmp/onizleme/kara-%s.png' % bg)
 print('kara tahtalar tamam')
+# K-352: yeni Grafik çizici ve grafik sekmesi
+try:
+    class GA(QWidget):
+        data_dir = '/tmp/atlas-onizleme'
+        graph_cfg = {'f0': 'x² − 4x + 3', 'f1': 'log_2(x+1)', 'f2': '', 'isaret': 'tepe'}
+        def board_info(self): return {'sinif': '9-A'}
+        def exam_clock(self): return None
+    ga = GA(); ga.resize(1920, 1080)
+    dlg = tk.GraphDialog(ga); dlg.resize(1860, 1020); dlg.show()
+    for _ in range(6): app.processEvents()
+    dlg.redraw(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-cizici.png')
+    dlg.fields[0].setText('a·x² + b·x + c'); dlg.fields[1].setText(''); app.processEvents(); dlg.redraw()
+    sl = dlg.sliders.get('a')
+    if sl: sl.setValue(-10)
+    for _ in range(4): app.processEvents()
+    dlg.redraw(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-kaydirici.png')
+    dlg.fields[0].setText('kök(□,□)'); app.processEvents(); dlg.alan_degisti(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-kutu.png')
+    dlg.close()
+    # grafik sekmesi: kara tahta + çerçeve + İncele + Atlas
+    durum = {'f': ['x² − 4x + 3', '', ''], 'param': {}, 'isaret': 'tepe'}
+    bilgi = {}; doc = tk.grafik_belge(durum, bilgi)
+    px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(2, 2), alpha=False); im = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()
+    class FM: pass
+    fm = FM(); fm.scroll = QWidget(); fm.scroll.resize(1920, 1080); fm.doc = doc; fm._sinav_su_an = False
+    gi = tk.GrafikIncele(fm); gi.esitle(); gi.atlas.oner(durum, bilgi); gi.show(); gi.adjustSize(); gi.atlas.adjustSize(); app.processEvents()
+    p = QPainter(im); W, H = im.width(), im.height()
+    for tur, g_ in (('ust', (0, 0, W, 7)), ('sol', (0, 0, 7, H)), ('sag', (W - 7, 0, 7, H)), ('alt', (0, H - 18, W, 18)), ('silgi', (W - 230, H - 48, 170, 40))):
+        w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); p.drawPixmap(g_[0], g_[1], w_.grab())
+    p.drawPixmap(W - gi.width() - 24, 24, gi.grab()); at = gi.atlas.grab(); p.drawPixmap(W - at.width() - 250, H - at.height() - 40, at); p.end()
+    im.save('/tmp/onizleme/grafik-tahta.png')
+    for k in ('kok', 'ykes', 'asimptot', 'alan', 'teget'):
+        d2 = {'f': ['x² − 4x + 3' if k != 'asimptot' else '1/(x-2)', '', ''], 'isaret': k, 'ek': {}}
+        dd = tk.grafik_belge(d2); px = dd[0].get_pixmap(matrix=tk.fitz.Matrix(1.2, 1.2), alpha=False); px.save('/tmp/onizleme/grafik-%s.png' % k)
+    print('grafik tamam')
+except Exception as e:
+    import traceback; traceback.print_exc()

@@ -6,6 +6,8 @@ spec = importlib.util.spec_from_file_location('tk', '/usr/share/tahta-kalem/taht
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QImage, QPainter, QColor, QPen, QPainterPath
 from PyQt5.QtCore import Qt, QPointF
+import traceback as _tb
+sys.excepthook = lambda t, v, b: _tb.print_exception(t, v, b)   # uygulamadaki gibi: hata Qt'yi düşürmesin
 app = QApplication(sys.argv); tk.ui_fonts()
 CEVAP = r"""y = 2x doğrusunu inceleyelim:
 • Bu doğru orijinden geçer ve eğimi $m = 2$'dir.
@@ -32,6 +34,7 @@ pn.cevap = CEVAP; pn.metin.setPlainText(CEVAP, True); pn.yaz_b.setEnabled(True);
 pn.grafik = ['2*x']; pn.grafik_b.show(); pn.maskot.ifade('konusma'); pn.durum.setText('Bugün 4 / 30')
 pn.yerlestir(); ana.show(); app.processEvents(); app.processEvents()
 ana.grab().save('/tmp/onizleme/panel.png')
+pn.klavye.attach(pn.giris); pn.klavye.show(); app.processEvents(); app.processEvents(); ana.grab().save('/tmp/onizleme/panel-klavye.png'); pn.klavye.hide(); app.processEvents()
 pn.tam_ekran(True); app.processEvents(); app.processEvents(); pn.metin._ciz(); app.processEvents()
 ana.grab().save('/tmp/onizleme/tam-ekran.png')
 # Tahtaya yaz: gerçek kalem çizgileri
@@ -49,3 +52,66 @@ for t, c in (('x^2 - 4*x + 3', '#2563eb'), ('1/(x-2)', '#e11d48')):
     fn, err = tk.graph_compile(t); fs.append((t, fn, c))
 doc = tk.graph_build(fs, {'roots': True, 'extrema': True, 'cross': False, 'yx': False}); pix = doc[0].get_pixmap(matrix=tk.fitz.Matrix(2, 2), alpha=False); pix.save('/tmp/onizleme/grafik.png')
 print('önizleme tamam')
+# K-351: kara tahtalar (gerçek make_board + çerçeve parçaları + beyaz el yazısı)
+from PyQt5.QtGui import QPixmap
+yazi, hy = tk.murekkep_cizgileri(r"Fonksiyonlar" + "\n" + r"$f(x) = x^{2} - 4x + 3$" + "\n" + r"Kökler: $x_{1} = 1$, $x_{2} = 3$" + "\n" + r"Tepe noktası: $T(2, -1)$", 420, 26, '#ffffff', 2.0, os.path.join(tk.UI_FONT_DIR, 'ReliefSingleLineSVG-Regular.svg'), tk.atlas_guzel)
+for bg in tk.KARA_TAHTALAR:
+    doc = tk.make_board(bg, 960, 1080); px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(2, 2), alpha=False, clip=tk.fitz.Rect(0, 0, 960, 540))
+    im = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()
+    p = QPainter(im); p.setRenderHint(QPainter.Antialiasing)
+    for s in yazi:
+        p.setPen(QPen(QColor(s['color']), s['width']*2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); pts = s['points']
+        path = QPainterPath(QPointF(pts[0][0]*2 + 200, pts[0][1]*2 + 160))
+        for x, y in pts[1:]: path.lineTo(x*2 + 200, y*2 + 160)
+        p.drawPath(path)
+    W, H = im.width(), im.height(); k, a = 7, 18
+    for tur, g_ in (('ust', (0, 0, W, k)), ('sol', (0, 0, k, H)), ('sag', (W - k, 0, k, H)), ('alt', (0, H - a, W, a)), ('silgi', (W - 230, H - a - 30, 170, 40))):
+        w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); pm = w_.grab(); p.drawPixmap(g_[0], g_[1], pm)
+    p.end(); im.save('/tmp/onizleme/kara-%s.png' % bg)
+print('kara tahtalar tamam')
+# K-352: yeni Grafik çizici ve grafik sekmesi
+try:
+    class GA(QWidget):
+        data_dir = '/tmp/atlas-onizleme'
+        graph_cfg = {'f0': 'x² − 4x + 3', 'f1': 'log_2(x+1)', 'f2': '', 'isaret': 'tepe'}
+        def board_info(self): return {'sinif': '9-A'}
+        def exam_clock(self): return None
+    ga = GA(); ga.resize(1920, 1080)
+    dlg = tk.GraphDialog(ga); dlg.resize(1860, 1020); dlg.show()
+    for _ in range(6): app.processEvents()
+    dlg.redraw(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-cizici.png')
+    dlg.fields[0].setText('a·x² + b·x + c'); dlg.fields[1].setText(''); app.processEvents(); dlg.redraw()
+    sl = dlg.sliders.get('a')
+    if sl: sl.setValue(-10)
+    for _ in range(4): app.processEvents()
+    dlg.redraw(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-kaydirici.png')
+    dlg.fields[0].setText('kök(□,□)'); app.processEvents(); dlg.alan_degisti(); app.processEvents(); dlg.grab().save('/tmp/onizleme/grafik-kutu.png')
+    dlg.close()
+    # grafik sekmesi: kara tahta + çerçeve + İncele + Atlas
+    durum = {'f': ['x² − 4x + 3', '', ''], 'param': {}, 'isaret': 'tepe'}
+    bilgi = {}; doc = tk.grafik_belge(durum, bilgi)
+    px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(2, 2), alpha=False); im = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()
+    class FM: pass
+    fm = FM(); fm.scroll = QWidget(); fm.scroll.resize(1920, 1080); fm.doc = doc; fm._sinav_su_an = False
+    gi = tk.GrafikIncele(fm); gi.esitle(); gi.atlas.oner(durum, bilgi); gi.show(); gi.adjustSize(); gi.atlas.adjustSize(); app.processEvents()
+    p = QPainter(im); W, H = im.width(), im.height()
+    for tur, g_ in (('ust', (0, 0, W, 7)), ('sol', (0, 0, 7, H)), ('sag', (W - 7, 0, 7, H)), ('alt', (0, H - 18, W, 18)), ('silgi', (W - 230, H - 48, 170, 40))):
+        w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); p.drawPixmap(g_[0], g_[1], w_.grab())
+    p.drawPixmap(W - gi.width() - 24, 24, gi.grab()); at = gi.atlas.grab(); p.drawPixmap(W - at.width() - 250, H - at.height() - 40, at); p.end()
+    im.save('/tmp/onizleme/grafik-tahta.png')
+    # grafik sekmesinin tamamı: üstte grafik, altta Atlas'ın el yazısı cevabı (üst üste binmez)
+    px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(1, 1), alpha=False); im2 = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()
+    cz2, _ = tk.murekkep_cizgileri(r"1. $y = x$ birim fonksiyondur." + "\n" + r"2. Orijinden geçer, eğimi $1$'dir." + "\n" + r"Cevap: $y = x$ birinci açıortay doğrusudur.", 820, 24, '#ffffff', 1.8, os.path.join(tk.UI_FONT_DIR, 'ReliefSingleLineSVG-Regular.svg'), tk.atlas_guzel)
+    p = QPainter(im2); p.setRenderHint(QPainter.Antialiasing)
+    for s_ in cz2:
+        p.setPen(QPen(QColor(s_['color']), s_['width'], Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); pts = s_['points']
+        path = QPainterPath(QPointF(pts[0][0] + 40, pts[0][1] + tk.GRAFIK_H + 16))
+        for x, y in pts[1:]: path.lineTo(x + 40, y + tk.GRAFIK_H + 16)
+        p.drawPath(path)
+    p.end(); im2.save('/tmp/onizleme/grafik-sekme-tam.png')
+    for k in ('kok', 'ykes', 'asimptot', 'alan', 'teget'):
+        d2 = {'f': ['x² − 4x + 3' if k != 'asimptot' else '1/(x-2)', '', ''], 'isaret': k, 'ek': {}}
+        dd = tk.grafik_belge(d2); px = dd[0].get_pixmap(matrix=tk.fitz.Matrix(1.2, 1.2), alpha=False); px.save('/tmp/onizleme/grafik-%s.png' % k)
+    print('grafik tamam')
+except Exception as e:
+    import traceback; traceback.print_exc()

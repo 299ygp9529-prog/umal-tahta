@@ -51,6 +51,9 @@ jobs:
           setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & sleep 25
           import -window root /tmp/ilk.png || true
           tail -20 /tmp/tahta.log || true
+      - name: Önizlemeler
+        run: |
+          python3 onizleme.py 2>&1 | tail -20 || true
       - name: Bağlantı
         run: |
           curl -sSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared
@@ -62,7 +65,7 @@ jobs:
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-tahta-durum
-          cp /tmp/adres.txt /tmp/sifre.enc . ; cp /tmp/ilk.png . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
+          cp /tmp/adres.txt /tmp/sifre.enc . ; cp /tmp/ilk.png /tmp/onizleme/*.png . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
           date -u +%FT%TZ > zaman.txt
           git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-tahta-durum

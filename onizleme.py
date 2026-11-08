@@ -97,7 +97,11 @@ try:
     p = QPainter(im); W, H = im.width(), im.height()
     for tur, g_ in (('ust', (0, 0, W, 7)), ('sol', (0, 0, 7, H)), ('sag', (W - 7, 0, 7, H)), ('alt', (0, H - 18, W, 18)), ('silgi', (W - 230, H - 48, 170, 40))):
         w_ = tk.KaraTahtaCerceve(None, tur); w_.resize(g_[2], g_[3]); p.drawPixmap(g_[0], g_[1], w_.grab())
-    p.drawPixmap(W - gi.width() - 24, 24, gi.grab()); at = gi.atlas.grab(); p.drawPixmap(W - at.width() - 250, H - at.height() - 40, at); p.end()
+    gi.adjustSize(); gi.resize(gi.sizeHint()); g1 = gi.grab(); gy = tk.GRAFIK_H*2 + 16
+    p.drawPixmap((W - g1.width())//2, gy, g1); at = gi.atlas.grab(); p.drawPixmap(W - at.width() - 24, gy - at.height() - 10, at)
+    gi.dug['tablo'].setChecked(True); gi.dug['tepe'].setChecked(False)
+    gi.tablo.setText('<table cellspacing="0"><tr><td style="padding:1px 10px;color:#7ff6ff"><b>x</b></td>' + ''.join('<td style="padding:1px 10px;border-left:1px solid #2a4468">%d</td>' % x for x in range(-2, 5)) + '</tr><tr><td style="padding:1px 10px;color:#7ff6ff"><b>y</b></td>' + ''.join('<td style="padding:1px 10px;border-left:1px solid #2a4468">%d</td>' % (x*x-4*x+3) for x in range(-2, 5)) + '</tr></table>')
+    gi.r2.show(); app.processEvents(); gi.adjustSize(); gi.resize(gi.sizeHint()); g2 = gi.grab(); p.drawPixmap((W - g2.width())//2, gy + g1.height() + 30, g2); p.end()
     im.save('/tmp/onizleme/grafik-tahta.png')
     # grafik sekmesinin tamamı: üstte grafik, altta Atlas'ın el yazısı cevabı (üst üste binmez)
     px = doc[0].get_pixmap(matrix=tk.fitz.Matrix(1, 1), alpha=False); im2 = QImage(px.samples, px.width, px.height, px.stride, QImage.Format_RGB888).copy()

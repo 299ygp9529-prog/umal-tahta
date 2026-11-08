@@ -115,3 +115,13 @@ try:
     print('grafik tamam')
 except Exception as e:
     import traceback; traceback.print_exc()
+# K-355: uygulamanın öteki pencerelerindeki klavye (ör. öğrenci arama)
+try:
+    from PyQt5.QtWidgets import QDialog, QLineEdit, QVBoxLayout, QLabel
+    dl = QDialog(); dl.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;font-size:24px;} QLineEdit{font-size:24px;padding:10px;background:#0a1628;color:white;border:2px solid #22e8ff;border-radius:12px;}')
+    vv = QVBoxLayout(dl); vv.setContentsMargins(30, 24, 30, 24); vv.addWidget(QLabel('Nerede sınava gireceğim?')); ed = QLineEdit('Ayşe'); vv.addWidget(ed)
+    kb = tk.attach_touch_keyboard(dl, ed, vv); kb.attach(ed); kb.show(); dl.resize(1100, 560); dl.show()
+    for _ in range(4): app.processEvents()
+    dl.grab().save('/tmp/onizleme/pencere-klavye.png')
+except Exception:
+    import traceback; traceback.print_exc()

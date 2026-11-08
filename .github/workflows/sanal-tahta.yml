@@ -57,8 +57,12 @@ jobs:
       - name: Bağlantı
         run: |
           curl -sSL -o /usr/local/bin/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 && chmod +x /usr/local/bin/cloudflared
-          setsid nohup cloudflared tunnel --no-autoupdate --url http://localhost:6080 > /tmp/cf.log 2>&1 &
-          for i in $(seq 60); do U=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -1); [ -n "$U" ] && break; sleep 2; done
+          U=""
+          for deneme in 1 2 3; do   # hızlı tünel bazen geç açılıyor: 3 kez dene
+            setsid nohup cloudflared tunnel --no-autoupdate --url http://localhost:6080 > /tmp/cf.log 2>&1 &
+            for i in $(seq 60); do U=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' /tmp/cf.log | head -1); [ -n "$U" ] && break; sleep 2; done
+            [ -n "$U" ] && break; pkill cloudflared || true; tail -5 /tmp/cf.log; sleep 5
+          done
           echo "ADRES: $U/vnc.html?autoconnect=1&resize=scale"
           echo "### Sanal tahta: $U/vnc.html?autoconnect=1&resize=scale" >> $GITHUB_STEP_SUMMARY
           echo "$U/vnc.html?autoconnect=1&resize=scale" > /tmp/adres.txt

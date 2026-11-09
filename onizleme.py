@@ -212,11 +212,12 @@ try:
     a = _j.load(open('anket-ornek.json'))
     ana3 = QWidget(); ana3.resize(1920, 1080); ana3.show()
     f = tk.AnketForm(ana3, a, '2765', 'Evin Polat', lambda v: None)
-    f.resize(1920, 1080); f.show(); app.processEvents()
+    f.setFixedSize(1600, 900); f.show(); app.processEvents()
     e_tc, e_dt, e_tel = f.edits[0], f.edits[1], f.edits[2]
     f.alan_sec(e_tc); app.processEvents()
     for ch in '1234567890': f.tus_bas(ch)
     app.processEvents(); f.grab().save('/tmp/onizleme/anket-tc.png')
+    f.setFixedSize(1280, 720); app.processEvents(); f.grab().save('/tmp/onizleme/anket-tc-kucuk.png'); f.setFixedSize(1600, 900)
     f.alan_sec(e_dt); 
     for ch in '0305200': f.tus_bas(ch)
     app.processEvents(); f.grab().save('/tmp/onizleme/anket-tarih.png')

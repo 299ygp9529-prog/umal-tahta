@@ -240,25 +240,7 @@ try:
 except Exception: _tb.print_exc()
 # K-393: LibreOffice olmadan PowerPoint → PDF (Atlas'ın kendi çeviricisi)
 try:
-    import subprocess as _sp
-    _r = _sp.run([sys.executable, '-m', 'pip', 'install', '-q', '--break-system-packages', '--target', '/tmp/pyx', 'python-pptx'], timeout=180, capture_output=True, text=True); print('pip:', _r.returncode, _r.stderr[-400:])
-    if _r.returncode: _r = _sp.run(['pip3', 'install', '-q', '--target', '/tmp/pyx', 'python-pptx'], timeout=180, capture_output=True, text=True); print('pip3:', _r.returncode, _r.stderr[-400:])
-    sys.path.insert(0, '/tmp/pyx')
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    from pptx.dml.color import RGBColor
-    pr = Presentation(); pr.slide_width = Inches(13.333); pr.slide_height = Inches(7.5)
-    s1 = pr.slides.add_slide(pr.slide_layouts[0]); s1.shapes.title.text = 'Müsilaj ve Deniz Ekosistemi'; s1.placeholders[1].text = '11. Sınıf Coğrafya · Ünite 2'
-    s2 = pr.slides.add_slide(pr.slide_layouts[1]); s2.shapes.title.text = 'Müsilaj neden oluşur?'
-    tf = s2.placeholders[1].text_frame; tf.text = 'Besin elementlerinin artması'
-    for t_ in ('Su sıcaklığının ani değişimi', 'Akıntının azalması', 'Beşerî ve sanayi atıkları'): tf.add_paragraph().text = t_
-    im = QImage(640, 400, QImage.Format_RGB32); im.fill(QColor('#2a7fbf')); p_ = QPainter(im); p_.fillRect(0, 260, 640, 140, QColor('#e8e4c8')); p_.setPen(QColor('white')); p_.drawText(20, 40, 'Deniz fotoğrafı'); p_.end(); im.save('/tmp/deniz.png')
-    s2.shapes.add_picture('/tmp/deniz.png', Inches(8.2), Inches(2), width=Inches(4.6))
-    s3 = pr.slides.add_slide(pr.slide_layouts[5]); s3.shapes.title.text = 'Etkileri'
-    tb = s3.shapes.add_table(3, 2, Inches(1), Inches(2), Inches(11), Inches(2.4)).table
-    for i_, (a_, b_) in enumerate((('Alan', 'Etki'), ('Balıkçılık', 'Ağlar dolar, av azalır'), ('Turizm', 'Kıyılar kirlenir'))): tb.cell(i_, 0).text = a_; tb.cell(i_, 1).text = b_
-    bx = s3.shapes.add_textbox(Inches(1), Inches(5.2), Inches(11), Inches(1)); bx.text_frame.text = 'Çözüm: atık su arıtma tesisleri'; r_ = bx.text_frame.paragraphs[0].runs[0]; r_.font.size = Pt(28); r_.font.bold = True; r_.font.color.rgb = RGBColor(0xC0, 0x20, 0x20)
-    pr.save('/tmp/ornek.pptx')
+    import shutil as _sh; _sh.copy('ornek.pptx', '/tmp/ornek.pptx')
     n_ = tk.pptx_yedek_pdf('/tmp/ornek.pptx', '/tmp/ornek.pdf'); print('pptx sayfa:', n_)
     d_ = fitz.open('/tmp/ornek.pdf')
     for i_ in range(d_.page_count): d_[i_].get_pixmap(dpi=60).save('/tmp/onizleme/pptx-%d.png' % (i_ + 1))

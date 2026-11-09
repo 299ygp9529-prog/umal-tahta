@@ -245,17 +245,3 @@ try:
     d_ = fitz.open('/tmp/ornek.pdf')
     for i_ in range(d_.page_count): d_[i_].get_pixmap(dpi=60).save('/tmp/onizleme/pptx-%d.png' % (i_ + 1))
 except Exception: _tb.print_exc()
-try:
-    d_ = fitz.open(); pg = d_.new_page(width=960, height=540); f_ = tk.pdf_fonts(); print('fitz', fitz.VersionBind, f_)
-    for kw in (dict(fontname='uxb', fontfile=f_['b']), dict()):
-        try: print('tb', kw.get('fontname'), pg.insert_textbox(fitz.Rect(60, 170, 900, 330), 'Müsilaj ve Deniz', fontsize=48, color=(1, 1, 1), align=1, **kw))
-        except Exception as e: print('tb hata', repr(e))
-except Exception: _tb.print_exc()
-try:
-    _orig = fitz.Page.insert_textbox
-    def _iz(self, rect, text, **kw):
-        r = _orig(self, rect, text, **kw); print('IZ', tuple(round(v) for v in rect), repr(text[:30]), kw.get('fontsize'), kw.get('fontname'), r); return r
-    fitz.Page.insert_textbox = _iz
-    tk.pptx_yedek_pdf('/tmp/ornek.pptx', '/tmp/ornek2.pdf')
-    fitz.Page.insert_textbox = _orig
-except Exception: _tb.print_exc()

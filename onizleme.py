@@ -205,3 +205,23 @@ try:
     d_ = tk.YerimDialog(ana2, dict(tur='salon', sinif='10-C', liste=liste), '4. Ders', datetime.date(2026, 11, 10), 17)
     d_.resize(1600, 900); d_.show(); app.processEvents(); app.processEvents(); d_.grab().save('/tmp/onizleme/yerim.png'); print('yerim sıra kutusu:', d_.seat_rects.get(17))
 except Exception: _tb.print_exc()
+
+# K-385: anket formu — rakam tuş takımı, biçim, yazarken görünür
+try:
+    import json as _j
+    a = _j.load(open('anket-ornek.json'))
+    ana3 = QWidget(); ana3.resize(1920, 1080); ana3.show()
+    f = tk.AnketForm(ana3, a, '2765', 'Evin Polat', lambda v: None)
+    f.resize(1920, 1080); f.show(); app.processEvents()
+    e_tc, e_dt, e_tel = f.edits[0], f.edits[1], f.edits[2]
+    f.alan_sec(e_tc); app.processEvents()
+    for ch in '1234567890': f.tus_bas(ch)
+    app.processEvents(); f.grab().save('/tmp/onizleme/anket-tc.png')
+    f.alan_sec(e_dt); 
+    for ch in '0305200': f.tus_bas(ch)
+    app.processEvents(); f.grab().save('/tmp/onizleme/anket-tarih.png')
+    for ch in '9': f.tus_bas(ch)
+    f.alan_sec(e_tel)
+    for ch in '05321234567': f.tus_bas(ch)
+    app.processEvents(); f.grab().save('/tmp/onizleme/anket-telefon.png'); print('anket değerler:', f.vals)
+except Exception: _tb.print_exc()

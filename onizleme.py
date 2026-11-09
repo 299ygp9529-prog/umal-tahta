@@ -252,16 +252,15 @@ try:
     w.switch_tab(ids[-1]); app.processEvents(); w.switch_tab(ids[0]); app.processEvents()
     print('sekme geçişi tamam', w.current_tab() == ids[0])
 except Exception: _tb.print_exc()
-# K-402: anma klibi kareleri (5 kare/sn, 960x540 jpeg) → anma/ klasörü
+# K-402: anma klibi (pakette kurulu anma/): 4 örnek an
 try:
     import os as _os
-    tk.ANMA_DIR = _os.path.abspath('anma'); _os.makedirs('/tmp/onizleme/anma', exist_ok=True)
-    w.showNormal(); w.resize(1920, 1080)
+    _os.makedirs('/tmp/onizleme', exist_ok=True); w.showNormal(); w.resize(1920, 1080)
     for _ in range(5): app.processEvents()
-    tm = tk.anma_tanim(); ae = tk.AnmaEkrani(w, tm); ae.zam.stop()
-    t_bas = time.monotonic()
-    for fi in range(int(tm['sure']*5) + 4):
-        ae.t0 = time.monotonic() - fi/5.0; ae.setGeometry(w.rect()); ae.repaint(); app.processEvents()
-        ae.grab().scaled(960, 540, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).save('/tmp/onizleme/anma/%04d.jpg' % fi, 'JPG', 82)
-    print('anma kareleri', fi + 1, 'süre %.1f sn' % (time.monotonic() - t_bas))
+    tm = tk.anma_tanim(); print('anma tanım:', bool(tm), tk.ANMA_DIR)
+    ae = tk.AnmaEkrani(w, tm); ae.zam.stop()
+    for k_, t_ in enumerate((0.5, 12.3, 33.7, 58.0)):
+        ae.t0 = time.monotonic() - t_; ae.setGeometry(w.rect()); ae.repaint(); app.processEvents()
+        ae.grab().scaled(960, 540, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).save('/tmp/onizleme/anma-%d.png' % k_)
+    ae.bitir(); print('anma tamam')
 except Exception: _tb.print_exc()

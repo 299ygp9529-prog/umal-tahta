@@ -58,6 +58,6 @@ jobs:
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum
           cp /tmp/ilk.png /tmp/onizleme/*.png . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
-          cp /tmp/onizleme-log.txt . 2>/dev/null || true; cp -r /tmp/onizleme/anma . 2>/dev/null || true; date -u +%FT%TZ > zaman.txt
+          cp /tmp/onizleme-log.txt . 2>/dev/null || true; date -u +%FT%TZ > zaman.txt
           git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-onizleme-durum

@@ -182,6 +182,18 @@ Cevap: C) 3"""
         while time.time() - t0 < 3: app.processEvents(); time.sleep(0.05)
         w.grab().save('/tmp/onizleme/cozum-alani-atlas.png')
         print('cozum alanı:', (w.doc.metadata or {}).get('keywords'), len(w.marks.get(0, [])))
+        # K-392: PDF sayfasındayken "Tahtaya yaz" → yeni sekme, kara tahta, beyaz kalem
+        try:
+            w.start_tab('Diziler', pdfler[0]); w.replace(fitz.open(pdfler[0]), pdfler[0]); w.tabs_changed()
+            for _ in range(10): app.processEvents()
+            w.grab().save('/tmp/onizleme/yenisekme-once.png')
+            w.atlas_sor_ac(None); ap = w.atlas_panel
+            ap.cevap = "Müsilaj (deniz salyası), besin elementlerinin artması ve akıntının azalması nedeniyle alglerin aşırı çoğalmasıyla oluşur.\nSu yüzeyini kaplayan bu örtü fotosentezi engeller."
+            ap.tahtaya_yaz(); t0 = time.time()
+            while time.time() - t0 < 3: app.processEvents(); time.sleep(0.05)
+            w.grab().save('/tmp/onizleme/yenisekme-atlas.png')
+            print('yeni sekme:', repr(w.source), w.background, w.color, len(w.marks.get(0, [])), [t.get('name') for t in (w.tabs or [])][:4])
+        except Exception: _tb.print_exc()
 except Exception:
     _tb.print_exc()
 # K-382: açı şapkası · K-383: Yerimi göster

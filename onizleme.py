@@ -241,7 +241,9 @@ except Exception: _tb.print_exc()
 # K-393: LibreOffice olmadan PowerPoint → PDF (Atlas'ın kendi çeviricisi)
 try:
     import subprocess as _sp
-    _sp.run([sys.executable, '-m', 'pip', 'install', '-q', 'python-pptx'], timeout=120)
+    _r = _sp.run([sys.executable, '-m', 'pip', 'install', '-q', '--break-system-packages', '--target', '/tmp/pyx', 'python-pptx'], timeout=180, capture_output=True, text=True); print('pip:', _r.returncode, _r.stderr[-400:])
+    if _r.returncode: _r = _sp.run(['pip3', 'install', '-q', '--target', '/tmp/pyx', 'python-pptx'], timeout=180, capture_output=True, text=True); print('pip3:', _r.returncode, _r.stderr[-400:])
+    sys.path.insert(0, '/tmp/pyx')
     from pptx import Presentation
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor

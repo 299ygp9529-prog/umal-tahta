@@ -245,3 +245,10 @@ try:
     d_ = fitz.open('/tmp/ornek.pdf')
     for i_ in range(d_.page_count): d_[i_].get_pixmap(dpi=60).save('/tmp/onizleme/pptx-%d.png' % (i_ + 1))
 except Exception: _tb.print_exc()
+# K-394: sekme geçişi / kapatma
+try:
+    w.start_tab('Deneme A'); w.replace(tk.make_board('kt_kareli', 960, 1080)); w.tabs_changed(); w.save_session()
+    ids = [t['id'] for t in w.tabs]; print('sekmeler', len(ids))
+    w.switch_tab(ids[-1]); app.processEvents(); w.switch_tab(ids[0]); app.processEvents()
+    print('sekme geçişi tamam', w.current_tab() == ids[0])
+except Exception: _tb.print_exc()

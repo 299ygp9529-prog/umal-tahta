@@ -184,3 +184,24 @@ Cevap: C) 3"""
         print('cozum alanı:', (w.doc.metadata or {}).get('keywords'), len(w.marks.get(0, [])))
 except Exception:
     _tb.print_exc()
+# K-382: açı şapkası · K-383: Yerimi göster
+try:
+    T2 = "Paralelkenarda karşılıklı açılar eşittir.\nİstenen m(\\widehat{DCB}) açısı: $m(\\widehat{DCB}) = 4x - 10 = 42$\nAyrıca $\\overline{AB} \\parallel \\overline{DC}$ ve $\\vec{u}$ vektörü."
+    cz, h = tk.murekkep_cizgileri(T2, 900, 34, '#ffffff', 2.6, os.path.join(tk.UI_FONT_DIR, 'ReliefSingleLineSVG-Regular.svg'), tk.atlas_guzel)
+    im = QImage(980, int(h) + 60, QImage.Format_RGB32); im.fill(QColor('#14284a')); p = QPainter(im); p.setRenderHint(QPainter.Antialiasing)
+    for s in cz:
+        p.setPen(QPen(QColor(s['color']), s['width'], Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); pts = s['points']
+        path = QPainterPath(QPointF(pts[0][0] + 40, pts[0][1] + 30))
+        for x, y in pts[1:]: path.lineTo(x + 40, y + 30)
+        p.drawPath(path)
+    p.end(); im.save('/tmp/onizleme/sapka.png'); print('şapka çizgi', len(cz)); print('balon:', tk.latex_duz(r'm(\widehat{DCB}) = 4x - 10'))
+except Exception: _tb.print_exc()
+try:
+    import datetime
+    adlar = ['Zeynep Acar', 'Mina Arslan', 'Mevlüt Eren Çerçi', 'Nisanur Yüksel', 'Eymen Aras Söğüt', 'Berat Barkoci', 'Yiğit Onur Sağlam', 'Bade Nur Koç', 'Açelya Aslantaş', 'Aysu Kaya']
+    sv = ['10-F', '9-D', '10-H', '9-B', '11-B', '11-A', '10-C', '10-C', '10-F', '9-B']
+    liste = [dict(sira=i + 1, no=str(100 + i), ad=adlar[i % 10], sinif=sv[i % 10], ders='Coğrafya' if sv[i % 10][:2] in ('9-', '10') else 'S. Coğrafya') for i in range(38)]
+    ana2 = QWidget(); ana2.resize(1600, 900)
+    d_ = tk.YerimDialog(ana2, dict(tur='salon', sinif='10-C', liste=liste), '4. Ders', datetime.date(2026, 11, 10), 17)
+    d_.resize(1600, 900); d_.show(); app.processEvents(); app.processEvents(); d_.grab().save('/tmp/onizleme/yerim.png'); print('yerim sıra kutusu:', d_.seat_rects.get(17))
+except Exception: _tb.print_exc()

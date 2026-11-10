@@ -22,7 +22,7 @@ jobs:
         env: { DEBIAN_FRONTEND: noninteractive }
         run: |
           apt-get update -qq
-          apt-get install -y -qq --no-install-recommends ./umal-tahta_*_amd64.deb xvfb x11vnc novnc python3-websockify openbox curl ca-certificates \
+          apt-get install -y -qq --no-install-recommends ./umal-tahta_*_amd64.deb xvfb x11vnc novnc python3-websockify openbox curl ca-certificates xdotool \
             fonts-dejavu locales imagemagick x11-utils dbus-x11 libgl1 libegl1 git openssl >/dev/null
           sed -i 's/^# *tr_TR.UTF-8/tr_TR.UTF-8/' /etc/locale.gen && locale-gen >/dev/null
       - name: Okul verisini kapat
@@ -48,8 +48,16 @@ jobs:
           x11vnc -storepasswd "$VNC_SIFRE" /tmp/vncpass >/dev/null
           x11vnc -display :1 -rfbauth /tmp/vncpass -forever -shared -rfbport 5900 -bg -quiet -o /tmp/x11vnc.log
           setsid nohup websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/ws.log 2>&1 &
-          setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & sleep 25
+          PYTHONPATH=/usr/lib/umal-tahta/python IZ_BAS=45 IZ_SURE=170 IZ_CIKTI=/tmp/iz.out setsid nohup python3 iz.py /usr/share/tahta-kalem/tahta_kalem.py > /tmp/tahta.log 2>&1 & sleep 25
           import -window root /tmp/ilk.png || true
+          sleep 22
+          for i in $(seq 1 24); do
+            y=$((300 + (i % 8) * 60)); xdotool mousemove 700 $y mousedown 1
+            for x in $(seq 720 40 1200); do xdotool mousemove $x $((y + (x / 40 % 2) * 14)); sleep 0.02; done
+            xdotool mouseup 1; sleep $([ $((i % 3)) = 0 ] && echo 3.2 || echo 0.6)
+          done
+          import -window root /tmp/onizleme-yazi.png || true
+          sleep 60; echo "=== ana iş parçacığı disk izleri"; cat /tmp/iz.out || true
           tail -20 /tmp/tahta.log || true
       - name: Önizlemeler
         run: |
@@ -57,7 +65,7 @@ jobs:
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum
-          cp /tmp/ilk.png /tmp/onizleme/*.png . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
+          cp /tmp/ilk.png /tmp/onizleme-yazi.png /tmp/onizleme/*.png . 2>/dev/null || true; cp /tmp/iz.out iz.txt 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
           cp /tmp/onizleme-log.txt . 2>/dev/null || true; date -u +%FT%TZ > zaman.txt
           git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-onizleme-durum

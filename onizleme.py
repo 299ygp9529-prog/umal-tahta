@@ -322,3 +322,12 @@ try:
     tk._draw_seatmap(type('O', (), {})(), p_, 1920, 1080, 1.0, _font, dict(sinif=slc_, liste=plc_['salonlar'][slc_], tur='salon', saat='10.30 – 11.10'), '#5cc8ff', '#5cc8ff', '4. Ders · 10 Kasım'); p_.end()
     im_.save('/tmp/onizleme/cografya-salon.png'); print('cografya salon tamam', slc_)
 except Exception: _tb.print_exc()
+# K-425: öğrenci araması uçak bileti (örnek öğrenci)
+try:
+    import datetime as _dt
+    plb_ = dict(tarih=_dt.date.today().isoformat(), ders='8. Ders', salonlar={'10-C': [dict(no='99999', ad='DENEME ÖĞRENCİ ADI', sinif='11-B', sira=17, ders='COĞRAFYA')]}, siniflar={})
+    w.kelebek = dict(planlar=[plb_]); w.exam_clock = lambda: _dt.datetime.combine(_dt.date.today(), _dt.time(9, 0))
+    d_ = tk.OgrenciAraDialog(w); d_.resize(1200, 1000); d_.show(); d_.edit.setText('99999')
+    for _ in range(8): app.processEvents()
+    d_.grab().save('/tmp/onizleme/bilet.png'); print('bilet tamam', d_.kart.isVisible(), d_.yer.isVisible()); d_.reject()
+except Exception: _tb.print_exc()

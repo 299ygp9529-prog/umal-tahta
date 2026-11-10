@@ -325,8 +325,9 @@ except Exception: _tb.print_exc()
 # K-425: öğrenci araması uçak bileti (örnek öğrenci)
 try:
     import datetime as _dt
-    plb_ = dict(tarih=_dt.date.today().isoformat(), ders='8. Ders', salonlar={'10-C': [dict(no='99999', ad='DENEME ÖĞRENCİ ADI', sinif='11-B', sira=17, ders='COĞRAFYA')]}, siniflar={})
-    w.kelebek = dict(planlar=[plb_]); w.exam_clock = lambda: _dt.datetime.combine(_dt.date.today(), _dt.time(9, 0))
+    plb_ = dict(tarih=_dt.date.today().isoformat(), ders='8. Ders', sinav='ORTAK SINAV · 1. DÖNEM', gozcu={'10-C': 'SUAT TOSUN'}, salonlar={'10-C': [dict(no='99999', ad='DENEME ÖĞRENCİ ADI', sinif='11-B', sira=17, ders='S. COĞRAFYA')]}, siniflar={})
+    plb2_ = dict(tarih=(_dt.date.today() + _dt.timedelta(days=2)).isoformat(), ders='5. Ders', salonlar={'9-B': [dict(no='99999', ad='DENEME ÖĞRENCİ ADI', sinif='11-B', sira=22, ders='MATEMATİK')]}, siniflar={})
+    w.kelebek = dict(planlar=[plb_, plb2_]); w.exam_clock = lambda: _dt.datetime.combine(_dt.date.today(), _dt.time(9, 0))
     d_ = tk.OgrenciAraDialog(w); d_.resize(1200, 1000); d_.show(); d_.edit.setText('99999')
     for _ in range(8): app.processEvents()
     d_.grab().save('/tmp/onizleme/bilet.png'); print('bilet tamam', d_.kart.isVisible(), d_.yer.isVisible()); d_.reject()

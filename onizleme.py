@@ -301,3 +301,12 @@ try:
     res_['yeni'][0].save('/tmp/onizleme/seatmap-yeni.png'); res_['eski'][0].save('/tmp/onizleme/seatmap-eski.png')
     print('seatmap ayni:', res_['eski'][0] == res_['yeni'][0], res_['eski'][0] == res_['yeni'][2])
 except Exception: _tb.print_exc()
+# K-422b: gece kara tahta: noktalı çizgi ile aynı görüntü mü, uzatma ne kadar sürüyor
+try:
+    for ad_, m_ in (('eski', es_), ('yeni', tk)):
+        for h_ in (1080, 5000, 20000):
+            t0_ = time.perf_counter(); d_ = m_.make_board('kt_gece', 960, h_); t1_ = time.perf_counter()
+            pm_ = d_[0].get_pixmap(clip=m_.fitz.Rect(0, 0, 960, 540)); t2_ = time.perf_counter()
+            print('gece', ad_, h_, 'yap', round(t1_ - t0_, 3), 'çiz', round(t2_ - t1_, 3))
+            if h_ == 1080: pm_.save('/tmp/onizleme/gece-%s.png' % ad_)
+except Exception: _tb.print_exc()

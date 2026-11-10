@@ -68,10 +68,10 @@ jobs:
             grep '^SONUC' /tmp/olcum-son.txt >> /tmp/olcum.txt || { echo "SONUC-YOK $2 $3 $4" >> /tmp/olcum.txt; tail -15 /tmp/olcum-son.txt >> /tmp/olcum-hata.txt; }
           }
           YENI=/usr/share/tahta-kalem/tahta_kalem.py; ESKI=$PWD/eski71.py
-          kos $YENI yeni kontrol 1; kos $YENI yeni ilk 1; kos $ESKI eski ilk 1
+          kos $ESKI eski dolu 10; kos $YENI yeni dolu 10
           kos $ESKI eski kalem 10; kos $YENI yeni kalem 10; kos $YENI yeni kalem 50; kos $YENI yeni kalem 100
           kos $ESKI eski sayfa 10; kos $YENI yeni sayfa 10
-          kos $YENI yeni hata 1; kos $YENI yeni kapanis 1; kos $ESKI eski kapanis 1
+          kos $YENI yeni ilk 1; kos $YENI yeni hata 1; kos $YENI yeni kapanis 1
           cat /tmp/olcum.txt; cat /tmp/olcum-hata.txt 2>/dev/null || true
       - name: Önizlemeler
         run: |

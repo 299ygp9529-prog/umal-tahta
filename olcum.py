@@ -34,9 +34,16 @@ def blok(t0, t1):
 
 # ---- yavaş disk: fsync (ve istenirse ilk okuma / yer değiştirme) gerçekten GEC saniye sürer; hangi iş parçacığında, ne zaman: kaydedilir
 DISK = []   # dict(t0, t1, ana)
+ANA_IZ = []   # ekran tarafındaki diske yazmaların çağrı zinciri
 _fsync = os.fsync
 def yavas_fsync(fd):
     k = dict(t0=time.perf_counter(), t1=None, ana=threading.current_thread() is ANA); DISK.append(k)
+    if k['ana']:
+        f = sys._getframe(1); st = []
+        while f is not None:
+            if 'tahta_kalem' in f.f_code.co_filename: st.append('%s:%d' % (f.f_code.co_name, f.f_lineno))
+            f = f.f_back
+        ANA_IZ.append(' < '.join(st[:8]))
     time.sleep(GEC); _fsync(fd); k['t1'] = time.perf_counter()
 def bekle(kosul, sonra, zaman_asimi=20.0, adim=10):
     t0 = time.perf_counter()
@@ -68,6 +75,24 @@ def diskteki():
 def bellekteki(): return json.loads(json.dumps({str(k): v for k, v in w.saved_marks().items()}, ensure_ascii=False))
 def bitir(kod=0):
     nt.stop(); sys.stdout.flush(); os._exit(kod)
+
+def s_dolu():
+    """Dolu sayfa (500 çizgi × 100 nokta): kalem basışı, silgi hareketi, geri al süreleri ve ekran donması (disk normal)."""
+    import random; random.seed(3)
+    def cz(i):
+        x0, y0 = 60 + (i % 20) * 45, 60 + (i // 20) * 38
+        return dict(tool='pen', color='#1d3fa8', width=2.4, nib='round', points=[[x0 + k * 0.35, y0 + 8 * ((k % 10) / 10)] for k in range(100)])
+    def a():
+        w.checkpoint(); w.marks[w.page] = [cz(i) for i in range(500)]; w.changed(); w.board.update(); w.save_session(arka=False) if 'arka=True' in open(MOD, encoding='utf-8').read() else w.save_session()
+        t0 = [time.perf_counter()]; n = [0]
+        def tur():
+            if n[0] >= N:
+                cikti(islem_sureleri_ms={k: ozet(v) for k, v in SURE.items()}, ekran_blok_ms=round(blok(t0[0], time.perf_counter()), 1), rss_mb=rss_mb()); return bitir()
+            n[0] += 1
+            def geri(): olc('geri al', w.undo); QTimer.singleShot(400, tur)
+            cizgi('pen', lambda: QTimer.singleShot(400, lambda: cizgi('eraser', lambda: QTimer.singleShot(400, lambda: cizgi('pen', geri)))))
+        QTimer.singleShot(1500, tur)
+    QTimer.singleShot(3000, a)
 
 def s_kontrol():
     """Ölçümün kanıtı: ekran iş parçacığı bilerek 500 ms uyutulur → nabız ~500 ms boşluk görmeli; arka plan iş parçacığı 500 ms uyursa görmemeli."""
@@ -146,7 +171,7 @@ def s_kalem(sayfa=False):
         cizgi('pen', lambda: bekle(lambda: len(DISK) > gorulen, disk_basladi, zaman_asimi=20))
     def son():
         os.fsync = _fsync; gecen = time.perf_counter() - durum['t0']; iyi = [b for b in BLOK if b >= 0]
-        cikti(disk_islemi=len(BLOK), disk_islemi_ekran_tarafinda=durum['ana_disk'], baslamayan=len(BLOK) - len(iyi), ekran_blok_ms=ozet(iyi),
+        cikti(disk_islemi=len(BLOK), disk_islemi_ekran_tarafinda=durum['ana_disk'], ekran_tarafi_zincir=ANA_IZ[:4], baslamayan=len(BLOK) - len(iyi), ekran_blok_ms=ozet(iyi),
               islem_sureleri_ms={k: ozet(v) for k, v in SURE.items()}, rss_mb_bas=durum['rss0'], rss_mb_son=rss_mb(),
               cpu_yuzde=round((cpu_sn() - durum['cpu0']) / gecen * 100, 1), sure_sn=round(gecen), cizgi_sayisi=sum(len(v) for v in w.marks.values()))
         bitir()
@@ -163,6 +188,7 @@ def s_hata():
         return asil_rep(a_, b_)
     R = {}
     def a():
+        w.save_session(arka=False) if 'arka=True' in open(MOD, encoding='utf-8').read() else w.save_session()   # ilk kayıt (belge diske) önce
         os.replace = bozuk; t0 = time.perf_counter()
         def b():
             def c():
@@ -181,8 +207,9 @@ def s_hata():
 
 def s_kapanis():
     """Kapanış: arka planda kayıt sürerken (disk 2 sn) son çizgi atılır ve uygulama kapanış adımları çalışır → diskte son hâl olmalı."""
-    os.fsync = yavas_fsync; R = {}
+    R = {}
     def a():
+        w.save_session(arka=False) if 'arka=True' in open(MOD, encoding='utf-8').read() else w.save_session(); os.fsync = yavas_fsync
         gorulen = len(DISK)
         def b():
             R['kapanista_arka_kayit_suruyordu'] = len(DISK) > gorulen and DISK[-1]['t1'] is None
@@ -198,6 +225,6 @@ def s_kapanis():
     QTimer.singleShot(3000, a)
 
 nt.start()
-QTimer.singleShot(0, dict(kontrol=s_kontrol, ilk=s_ilk, kalem=s_kalem, sayfa=lambda: s_kalem(True), hata=s_hata, kapanis=s_kapanis)[SENARYO])
+QTimer.singleShot(0, dict(dolu=s_dolu, kontrol=s_kontrol, ilk=s_ilk, kalem=s_kalem, sayfa=lambda: s_kalem(True), hata=s_hata, kapanis=s_kapanis)[SENARYO])
 QTimer.singleShot(int((60 + N * 12) * 1000), lambda: (cikti(zaman_asimi=True), bitir(2)))
 app.exec_()

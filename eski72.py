@@ -1749,11 +1749,11 @@ UPDATE_RESULTS = ('Güncel:', 'Kuruldu:', 'Bağlantı yok', 'TUTMADI', 'başarı
 class ArkaDosya:
     """K-429 (sıfır donma): ekran iş parçacığı diske dokunmaz. Sık okunan küçük dosyalar bellekte tutulur ve arka plan iş parçacığında
     2 sn'de bir denetlenir (değişen yeniden okunur); yazmalar kuyruğa girer, arka planda atomik yazılır (aynı dosyanın yalnız son hâli).
-    İlk erişimde dosya bir kez doğrudan okunur (yazılan dosyaların eski içeriği kaybolmasın). Kapanışta kuyruk boşaltılır."""
-    YOKLA_SN = 2.0; UNUT_SN = 900
+    İlk erişimde dosya bir kez kilit dışında okunur (K-433); kayıtlar bellekte kalır. Kapanışta kuyruk boşaltılır."""
+    YOKLA_SN = 2.0
     def __init__(self):
         import threading
-        self.k = threading.Lock(); self.d = {}; self.yaz_k = {}; self.uyan = threading.Event()
+        self.k = threading.Lock(); self.yz = threading.RLock(); self.d = {}; self.yaz_k = {}; self.isler = []; self.uyan = threading.Event()
         self.t = threading.Thread(target=self._dongu, name='arka-dosya', daemon=True); self.t.start()
     @staticmethod
     def _stat(path):
@@ -1766,26 +1766,36 @@ class ArkaDosya:
         if tur == 'metin': return b.decode('utf-8', 'replace')
         return b
     def _kayit(self, path, tur):
-        e = self.d.get(path)
-        if e is None:   # ilk erişim: bir kez doğrudan
-            st = self._stat(path); val = err = None
-            if st is not None and tur != 'yok':
-                try: val = self._oku(path, tur)
-                except (OSError, ValueError) as x: err = x
-            e = self.d[path] = dict(tur=tur, st=st, val=val, err=err, t=time.monotonic(), surum=0)
-        e['t'] = time.monotonic(); return e
+        """K-433: kilit TUTULMADAN çağrılır. İlk erişimde dosya kilit dışında okunur (disk tıkalıysa başka iş parçacığı beklemez);
+        kayıtlar bellekten atılmaz, böylece her dosya oturum başına yalnız bir kez doğrudan okunur."""
+        with self.k:
+            e = self.d.get(path)
+            if e is not None and (e['tur'] != 'yok' or tur == 'yok'): e['t'] = time.monotonic(); return e
+        st = self._stat(path); val = err = None
+        if st is not None and tur != 'yok':
+            try: val = self._oku(path, tur)
+            except (OSError, ValueError) as x: err = x
+        with self.k:
+            e = self.d.get(path)
+            if e is None: e = self.d[path] = dict(tur=tur, st=st, val=val, err=err, t=time.monotonic(), surum=0)
+            elif e['tur'] == 'yok' and tur != 'yok' and not e.get('yazilacak'): e.update(tur=tur, st=st, val=val, err=err)
+            return e
     def json(self, path, varsayilan=None):
         """Dosyanın JSON içeriği (kopya); yoksa ya da bozuksa varsayilan."""
-        with self.k: e = self._kayit(path, 'json'); val = e['val'] if e['st'] is not None and e['err'] is None else None
+        e = self._kayit(path, 'json')
+        with self.k: val = e['val'] if e['st'] is not None and e['err'] is None else None
         return copy.deepcopy(val) if val is not None else varsayilan
     def metin(self, path, varsayilan=''):
-        with self.k: e = self._kayit(path, 'metin'); val = e['val'] if e['st'] is not None and e['err'] is None else None
+        e = self._kayit(path, 'metin')
+        with self.k: val = e['val'] if e['st'] is not None and e['err'] is None else None
         return val if val is not None else varsayilan
     def surum(self, path, tur='json'):
         """Dosya her değiştiğinde artan sayı (yoksa -1): 'değişti mi' denetimi diske gitmeden."""
-        with self.k: e = self._kayit(path, tur); return e['surum'] if e['st'] is not None else -1
+        e = self._kayit(path, tur)
+        with self.k: return e['surum'] if e['st'] is not None else -1
     def var(self, path):
-        with self.k: e = self._kayit(path, 'yok'); return e['st'] is not None
+        e = self._kayit(path, 'yok')
+        with self.k: return e['st'] is not None
     def yaz_json(self, path, obj, sonra=None):
         """Bellekte hemen güncellenir; diske arka planda yazılır. sonra: yazıldıktan sonra arka planda çağrılır (ör. havuza gönder)."""
         b = json.dumps(obj, ensure_ascii=False).encode('utf-8')
@@ -1793,16 +1803,39 @@ class ArkaDosya:
             e = self.d.get(path) or dict(tur='json', st=None, err=None, surum=0)
             e.update(val=copy.deepcopy(obj), err=None, t=time.monotonic(), yazilacak=True); e['st'] = e.get('st') or (0, len(b)); self.d[path] = e
             onceki = self.yaz_k.get(path); sn = (onceki[1] if onceki else []) + ([sonra] if sonra else [])
-            self.yaz_k[path] = (b, sn)
+            self.yaz_k.pop(path, None); self.yaz_k[path] = (b, sn)
+        self.uyan.set()
+    def yaz_is(self, path, uret):
+        """K-434: içerik arka planda üretilir (uret() → bayt), fsync ile atomik yazılır; aynı dosyanın yalnız son işi yazılır."""
+        with self.k: self.yaz_k.pop(path, None); self.yaz_k[path] = (uret, [], True)
+        self.uyan.set()
+    def is_ekle(self, path, fn):
+        """K-437: sırası önemli çok adımlı iş (ör. yeni belgenin ilk kaydı: PDF → durum → eski dosyaların silinmesi).
+        Bu dosyanın kuyruktaki eski yazması işten önce yazılır; sonraki yazmalar işten sonra. fn() False dönerse
+        (yazılamadı) bu dosyanın kuyruktaki yeni yazmaları atılır: eksik belgeye işaret eden kayıt yazılmaz."""
+        with self.k: onceki = self.yaz_k.pop(path, None); self.isler.append((path, onceki, fn))
         self.uyan.set()
     def _yaz_hepsi(self):
-        with self.k: is_ = self.yaz_k; self.yaz_k = {}
-        for path, (b, sn) in is_.items():
+        with self.yz:   # K-434: aynı anda tek yazıcı (arka plan ile bosalt() çakışmaz, sıra bozulmaz)
+            with self.k: isler = self.isler; self.isler = []; is_ = self.yaz_k; self.yaz_k = {}
+            for path, onceki, fn in isler:
+                if onceki is not None: self._yaz_bir(path, onceki[0], onceki[1], len(onceki) > 2)
+                try: ok = fn() is not False
+                except Exception as x: print('arka iş:', path, x); ok = False
+                if not ok:
+                    is_.pop(path, None)
+                    with self.k: self.yaz_k.pop(path, None)
+            for path, kayit in is_.items(): self._yaz_bir(path, kayit[0], kayit[1], len(kayit) > 2)
+    def _yaz_bir(self, path, b, sn, saglam):
+        if True:
             try:
+                if callable(b): b = b()
                 tmp = path + '.arka'
-                with open(tmp, 'wb') as f: f.write(b)
+                with open(tmp, 'wb') as f:
+                    f.write(b)
+                    if saglam: f.flush(); os.fsync(f.fileno())
                 os.replace(tmp, path)
-            except OSError as x: print('arka yazma:', path, x)
+            except Exception as x: print('arka yazma:', path, x)
             with self.k:
                 e = self.d.get(path)
                 if e is not None: e['st'] = self._stat(path); e['yazilacak'] = False
@@ -1817,14 +1850,11 @@ class ArkaDosya:
         while True:
             self.uyan.wait(0.3); self.uyan.clear()
             try:
-                if self.yaz_k: self._yaz_hepsi()
+                if self.yaz_k or self.isler: self._yaz_hepsi()
                 if time.monotonic() - son < self.YOKLA_SN: continue
                 son = time.monotonic()
                 with self.k: L = [(p_, e['tur'], e['st'], e.get('yazilacak'), e['t']) for p_, e in self.d.items()]
                 for p_, tur, st0, yz, t_ in L:
-                    if time.monotonic() - t_ > self.UNUT_SN:
-                        with self.k: self.d.pop(p_, None)
-                        continue
                     if yz: continue
                     st = self._stat(p_)
                     if st == st0: continue
@@ -1837,6 +1867,29 @@ class ArkaDosya:
                         if e is None or e.get('yazilacak'): continue
                         e.update(st=st, val=val, err=err); e['surum'] += 1
             except Exception as x: print('arka döngü:', x)
+def _json_anahtar(k): return json.dumps({k: 0}, ensure_ascii=False)[1:-4]
+_OTURUM_KILIT = [None]
+def oturum_metni(kucuk, sol, snap, onbellek):
+    """K-434: durum.json metni. Değişmeyen sayfaların yazısı önbellekten gelir; değişen sayfa çizgi çizgi yazıya çevrilir
+    (arka planda çalışırken ekran iş parçacığı araya girebilsin). snap hiç değiştirilmeyen kopyadır (snapshot_marks)."""
+    import threading
+    if _OTURUM_KILIT[0] is None: _OTURUM_KILIT[0] = threading.Lock()
+    with _OTURUM_KILIT[0]:
+        def liste(key):
+            lst = snap[key]; c = onbellek.get(key)
+            if c is not None and c[0] is lst: return c[1]
+            t = '[' + ','.join(json.dumps(m, ensure_ascii=False) for m in lst) + ']' if isinstance(lst, list) else json.dumps(lst, ensure_ascii=False)
+            onbellek[key] = (lst, t); return t
+        nesne = lambda cift: '{' + ','.join(_json_anahtar(k) + ':' + v for k, v in cift) + '}'
+        marks = nesne((k[1], liste(k)) for k in snap if k[0] == 'm')
+        ikinci = nesne((k[1], liste(k)) for k in snap if k[0] == 'i')
+        cozum = []
+        for sk, v in sol.items():
+            cift = [(a, json.dumps(b, ensure_ascii=False)) for a, b in v.items()]
+            cift.append(('marks', nesne((k[2], liste(k)) for k in snap if k[0] == 's' and k[1] == sk)))
+            cozum.append((sk, nesne(cift)))
+        for k in [k for k in onbellek if k not in snap]: del onbellek[k]
+        return nesne([(a, json.dumps(b, ensure_ascii=False)) for a, b in kucuk.items()] + [('marks', marks), ('ikinci_cozum', ikinci), ('solutions', nesne(cozum))])
 _AD = [None]
 def arka_dosya():
     if _AD[0] is None: _AD[0] = ArkaDosya()
@@ -1887,8 +1940,13 @@ def snapshot_marks(marks, prev=None):
         olds = old if isinstance(old, list) else []
         out[p] = [olds[i] if i < len(olds) and olds[i] == m else copy.deepcopy(m) for i, m in enumerate(lst)] if isinstance(lst, list) else copy.deepcopy(lst)
     return out
-def live_marks(snapshot):   # paylaşılan kopyadan canlı (değiştirilebilir) yazılar
-    return copy.deepcopy(snapshot)
+def live_marks(snapshot):
+    """Paylaşılan kopyadan canlı (değiştirilebilir) yazılar. K-436: [x, y] nokta çiftleri paylaşılır (hiçbir yerde yerinde
+    değiştirilmez, hep yeni liste atanır); çizgi sözlükleri ve listeleri yenidir. Dolu sayfada Geri al 54 ms → birkaç ms."""
+    def kopya(m):
+        if not isinstance(m, dict): return copy.deepcopy(m)
+        return {k: (list(v) if k in ('points', 'w') and isinstance(v, list) else copy.deepcopy(v)) for k, v in m.items()}
+    return {p: ([kopya(m) for m in lst] if isinstance(lst, list) else copy.deepcopy(lst)) for p, lst in snapshot.items()}
 
 # ---- Yazdır: okul bilgisayarlarına bağlı yazıcılara (yönetim sunucusu üzerinden) ----
 YONETIM_URL = 'https://ceqdghykweubeaokwadt.supabase.co'
@@ -1989,7 +2047,7 @@ class PrintDialog(QDialog):
         m = self.main; out = []
         name = os.path.splitext(os.path.basename(m.source))[0] if m.source else 'Tahta'
         out.append(dict(kind='cur', name=name, label='Ekrandaki: ' + name, pages=len(m.doc)))
-        cur = m.current_tab()
+        cur = m.current_tab(); arka_dosya().bosalt()   # K-435: diğer sekmelerin son kaydı diskte
         for t in (m.tabs or []):
             if t.get('id') == cur: continue
             folder = os.path.join(m.data_dir, t['id'])
@@ -2463,6 +2521,15 @@ class Board(QWidget):
         d = getattr(o, 'daily', None)
         if d and o.solution_origin is None and any(it['tab'] == o.current_tab() and it['page'] == o.page for it in d['items']): return False
         return True
+    def hazirla_sonra(self, ms=250):
+        """K-436: silgi, geri al ya da sayfa değişince hazır sayfa görüntüsü boşta önceden çizilir; sonraki kalem basışı beklemez."""
+        t = getattr(self, '_hz_t', None)
+        if t is None: t = self._hz_t = QTimer(self); t.setSingleShot(True); t.timeout.connect(self._hazirla)
+        t.start(ms)
+    def _hazirla(self):
+        try:
+            if self.active is None and self.isVisible() and not self.transform: self.ensure_base()
+        except Exception as e: print('hazırla:', e)
     def ensure_base(self):
         """Önizleme için görünen sayfanın hazır görüntüsü (yoksa bir kez çizilir)."""
         r = self.visibleRegion().boundingRect()
@@ -3053,8 +3120,9 @@ class Board(QWidget):
         return self.event_impl(e)
     def finish(self, cancel=False):
         lm = getattr(self.owner, 'live_meter', None)
-        if lm is None or self.active is None: return self.finish_impl(cancel)
-        st = time.perf_counter(); r = self.finish_impl(cancel); lm.stroke_end((time.perf_counter() - st)*1000, self); return r
+        if lm is None or self.active is None: r = self.finish_impl(cancel)
+        else: st = time.perf_counter(); r = self.finish_impl(cancel); lm.stroke_end((time.perf_counter() - st)*1000, self)
+        self.hazirla_sonra(); return r
     def finish_impl(self, cancel=False):
         self.hold_timer.stop();self.snapped=False;self.pred=None
         if getattr(self, 'geo_drag', None) is not None: self.geo_end(); return
@@ -3139,12 +3207,21 @@ class Board(QWidget):
             else:hit=r.contains(stroke_bounds(s))
             if hit:found.append(i)
         return found
+    def cizgi_kutusu(self, s):
+        """K-436: çizginin sınır kutusu (önbellekte; noktalar değişince yeniden)."""
+        pts = s['points']; c = self.__dict__.setdefault('_kutu', {}); e = c.get(id(s))
+        if e is not None and e[0] is pts and e[1] == len(pts): return e[2]
+        if len(c) > 4000: c.clear()
+        xs = [q[0] for q in pts]; ys = [q[1] for q in pts]; b = (min(xs), min(ys), max(xs), max(ys)); c[id(s)] = (pts, len(pts), b); return b
     def erase(self, pt):
         strokes = self.owner.marks.get(self.owner.page, [])
         def hit(s):
             if s['tool'] == 'whiteout': return False
             pts = s['points']
-            return any(segment_distance(pt,a,b) <= 12/self.scale+s['width']/2 for a,b in zip(pts,pts[1:] or pts))
+            if not pts: return False
+            r = 12/self.scale+s['width']/2; b = self.cizgi_kutusu(s)   # K-436: uzaktaki çizgi tek karşılaştırmayla elenir
+            if pt[0] < b[0]-r or pt[0] > b[2]+r or pt[1] < b[1]-r or pt[1] > b[3]+r: return False
+            return any(segment_distance(pt,a,b) <= r for a,b in zip(pts,pts[1:] or pts))
         left = [s for s in strokes if not hit(s)]
         if len(left) != len(strokes):
             self.owner.marks[self.owner.page] = left
@@ -3689,7 +3766,7 @@ class Window(QMainWindow):
         self.havuz_timer=QTimer(self);self.havuz_timer.setInterval(60*1000);self.havuz_timer.timeout.connect(lambda: None if (getattr(self,'kalem_yaziyor',None) and self.kalem_yaziyor()) else self.run_havuz());self.havuz_timer.start()
         QTimer.singleShot(20000,self.run_havuz)
         self.session_timer=QTimer(self);self.session_timer.setSingleShot(True)
-        self.session_timer.timeout.connect(self.save_session)
+        self.session_timer.timeout.connect(self.oto_kayit)
         self.marks, self.undo_stack, self.redo_stack = {}, [], []
         # One ordered history across PDF pages, solution areas, tabs and screen ink:
         # each entry names where the edit happened, so Geri al can go there.
@@ -4041,7 +4118,7 @@ class Window(QMainWindow):
         try:
             # The original stays in the autosaved base PDF (written once);
             # only its name and the notes are kept, never a full re-export.
-            if not self.save_session():raise ValueError('Otomatik kayıt yapılamadı.')
+            if not self.save_session(arka=False):raise ValueError('Otomatik kayıt yapılamadı.')
             # Same question selected again (mostly overlapping frame on the
             # same page): reopen its saved solution instead of a blank one.
             previous=max(((solution_overlap(v['rect'],clip),k) for k,v in self.solutions.items() if v.get('page')==self.page),default=(0,None))
@@ -4248,6 +4325,7 @@ class Window(QMainWindow):
         if getattr(self, 'geo_hide', False): o['h'] = True
         self.checkpoint(); m['O'].append(o); b.geo_touch(m)
     def geo_after_history(self):
+        self.board.hazirla_sonra()   # K-436
         if getattr(self, 'geo_bar', None) is not None and self.geo_bar.isVisible():
             self.board.geo_valid_sel(self.board.geo_model()); self.geo_bar.sync(); self.geo_panel_sync()
     def geo_reveal(self, k):
@@ -4417,11 +4495,34 @@ class Window(QMainWindow):
         self.dirty = True; self.setWindowTitle(PRODUCT+' • Kaydedilmemiş değişiklikler')
         self.session_timer.start(1200)
 
-    def save_session(self):
+    def oto_kayit(self):
+        """K-434: otomatik kayıt yazarken yapılmaz (en çok 30 sn bekler); diske yazma arka planda."""
+        if kalem_mesgul(self): self.session_timer.start(700); return
+        self.save_session(arka=True)
+    def oturum_anlik(self, name):
+        """K-434: kaydedilecek durumun değişmez kopyası (değişmeyen sayfa ve çizgiler bir önceki kopyayla paylaşılır)."""
+        tum = {}
+        for k, v in self.saved_marks().items(): tum[('m', str(k))] = v
+        for k, v in self.second_solutions().items(): tum[('i', str(k))] = v
+        sol = {}
+        for k, v in self.solutions.items():
+            sol[k] = copy.deepcopy({a: b for a, b in v.items() if a != 'marks'})
+            for p_, m in v['marks'].items(): tum[('s', k, str(p_))] = m
+        snap = snapshot_marks(tum, getattr(self, '_oturum_snap', None)); self._oturum_snap = snap
+        return dict(source=self.source, page=self.page, zoom=self.zoom, dirty=self.dirty, pdf=name), sol, snap
+    def save_session(self, arka=True):
+        """K-435: aynı belgede yalnız yazılar değiştiyse kayıt arka planda (sayfa değiştirme, sekme geçişi dahil); belge değiştiyse doğrudan."""
         self.session_timer.stop()
         try:
             os.makedirs(self.session_dir,mode=0o700,exist_ok=True)
             pdf_path=os.path.join(self.session_dir,self.session_pdf_name or 'belge.pdf')
+            if arka:   # K-437: hep arka planda; belge aynıysa yalnız durum, değilse sıralı ilk kayıt
+                if self.session_pdf_pending or getattr(self, '_durum_pdf', None) != (self.session_dir, self.session_pdf_name or 'belge.pdf'):
+                    return self.ilk_kayit_arka(self.session_pdf_pending or not os.path.isfile(pdf_path))
+                name = self.session_pdf_name or 'belge.pdf'; kucuk, sol, snap = self.oturum_anlik(name); onb = self.__dict__.setdefault('_oturum_onb', {})
+                arka_dosya().yaz_is(os.path.join(self.session_dir, 'durum.json'), lambda: oturum_metni(kucuk, sol, snap, onb).encode('utf-8'))
+                return True
+            arka_dosya().bosalt()   # doğrudan kayıt: önce arka plandaki (daha eski) kayıtlar diske
             if self.session_pdf_pending or not os.path.isfile(pdf_path):
                 # The clean base PDF is written once per document; notes go
                 # to the small JSON below, so large textbooks never re-save
@@ -4433,9 +4534,9 @@ class Window(QMainWindow):
                 finally:
                     if os.path.exists(tmp_pdf):os.unlink(tmp_pdf)
             else:name=self.session_pdf_name or 'belge.pdf'
-            meta=dict(source=self.source,page=self.page,zoom=self.zoom,dirty=self.dirty,pdf=name,
-                      marks={str(k):v for k,v in self.saved_marks().items()},ikinci_cozum=self.second_solutions(),
-                      solutions={k:dict(v,marks={str(p):m for p,m in v['marks'].items()}) for k,v in self.solutions.items()})
+            kucuk, sol, snap = self.oturum_anlik(name); onb = self.__dict__.setdefault('_oturum_onb', {})
+            arka_dosya().bosalt()   # sıradaki eski kayıt önce yazılsın, sonra bu (daha yeni) kayıt
+            metin = oturum_metni(kucuk, sol, snap, onb)
             def write_meta(path,data):
                 fd,tmp=tempfile.mkstemp(dir=self.session_dir,suffix='.json')
                 try:
@@ -4452,11 +4553,11 @@ class Window(QMainWindow):
             fd,tmp=tempfile.mkstemp(dir=self.session_dir,suffix='.json')
             try:
                 with os.fdopen(fd,'w',encoding='utf-8') as f:
-                    json.dump(meta,f,ensure_ascii=False);f.flush();os.fsync(f.fileno())
+                    f.write(metin);f.flush();os.fsync(f.fileno())
                 os.replace(tmp,os.path.join(self.session_dir,'durum.json'))
             finally:
                 if os.path.exists(tmp):os.unlink(tmp)
-            self.session_pdf_name=name;self.session_pdf_pending=False
+            self.session_pdf_name=name;self.session_pdf_pending=False;self._durum_pdf=(self.session_dir,name)
             keep={name}
             if self.solution_origin and self.solution_origin.get('pdf'):keep.add(self.solution_origin['pdf'])
             try:
@@ -4471,7 +4572,49 @@ class Window(QMainWindow):
             self.statusBar().showMessage('Otomatik kayıt yapılamadı. PDF kaydet düğmesini kullanın: '+str(e))
             return False
 
+    def ilk_kayit_arka(self, yeni_pdf):
+        """K-437: yeni belgenin (ya da bu oturumdaki ilk) kaydı arka planda, eski doğrudan kayıtla aynı sırayla:
+        eski durum değiştiyse yedek.json → belge PDF'i → durum.json → artık kullanılmayan belge PDF'leri silinir.
+        Ekran tarafında yalnız belge belleğe yazılır (diske dokunulmaz). Yazılamazsa bir sonraki kayıt baştan dener."""
+        dirp = self.session_dir; os.makedirs(dirp, mode=0o700, exist_ok=True)
+        if yeni_pdf: name = 'belge-' + uuid.uuid4().hex + '.pdf'; pdf_b = self.doc.tobytes(garbage=1)
+        else: name = self.session_pdf_name or 'belge.pdf'; pdf_b = None
+        kucuk, sol, snap = self.oturum_anlik(name); onb = self.__dict__.setdefault('_oturum_onb', {})
+        sol_pdf = (self.solution_origin or {}).get('pdf'); w_ = self
+        def is_():
+            def yaz(path, b):
+                tmp = path + '.arka'
+                with open(tmp, 'wb') as f: f.write(b); f.flush(); os.fsync(f.fileno())
+                os.replace(tmp, path)
+            try:
+                mp = os.path.join(dirp, 'durum.json')
+                try:
+                    with open(mp, encoding='utf-8') as f: old = json.load(f)
+                    if old.get('pdf', 'belge.pdf') != name: yaz(os.path.join(dirp, 'yedek.json'), json.dumps(old, ensure_ascii=False).encode('utf-8'))
+                except (OSError, ValueError): pass
+                if pdf_b is not None: yaz(os.path.join(dirp, name), pdf_b)
+                yaz(mp, oturum_metni(kucuk, sol, snap, onb).encode('utf-8'))
+            except Exception as x:
+                print('ilk kayıt:', x)
+                if getattr(w_, '_durum_pdf', None) == (dirp, name): w_._durum_pdf = None; w_.session_pdf_pending = True   # sonraki kayıt baştan
+                return False
+            keep = {name}
+            if sol_pdf: keep.add(sol_pdf)
+            try:
+                with open(os.path.join(dirp, 'yedek.json'), encoding='utf-8') as f: keep.add(json.load(f).get('pdf', 'belge.pdf'))
+            except (OSError, ValueError): pass
+            try:
+                for c in os.listdir(dirp):
+                    if c.startswith('belge-') and c.endswith('.pdf') and c not in keep:
+                        try: os.unlink(os.path.join(dirp, c))
+                        except OSError: pass
+            except OSError: pass
+            return True
+        arka_dosya().is_ekle(os.path.join(dirp, 'durum.json'), is_)
+        self.session_pdf_name = name; self.session_pdf_pending = False; self._durum_pdf = (dirp, name)
+        return True
     def restore_session(self):
+        arka_dosya().bosalt()   # K-435: arka plandaki kayıt bitmeden sekme dosyası okunmaz (hep son hâl)
         meta_path=os.path.join(self.session_dir,'durum.json')
         if not os.path.isfile(meta_path):return False
         doc=None
@@ -4507,6 +4650,7 @@ class Window(QMainWindow):
                     self.solution_origin=origin;self.tabs_changed()
                 except Exception:pass
             self.statusBar().showMessage('Cihazdaki son PDF açıldı · Sayfa %s · Notlarınız korundu' % (self.page+1))
+            self._durum_pdf=(self.session_dir,self.session_pdf_name)   # K-435: açılan sekmenin sonraki kayıtları arka planda
             return True
         except Exception as e:
             try:   # K-394: belge başka bir adımda kapatılmış olabilir; ikinci kez kapatmak "document closed" hatası verip uygulamayı bozuyordu
@@ -5566,12 +5710,10 @@ class Window(QMainWindow):
     def anket_sayim(self):
         """Kontenjanlı sorular: okul genelindeki seçim sayıları (DersMap, dakikada bir)."""
         path = os.path.join(self.data_dir, 'anket-sayim.json')
-        try:
-            m = os.path.getmtime(path)
-            if getattr(self, '_anket_sayim', (None, None))[0] != m:
-                with open(path, encoding='utf-8') as f: self._anket_sayim = (m, json.load(f))
-            return self._anket_sayim[1] or []
-        except (OSError, ValueError): return []
+        m = arka_dosya().surum(path)   # K-434: diske gitmeden
+        if m < 0: return []
+        if getattr(self, '_anket_sayim', (None, None))[0] != m: self._anket_sayim = (m, arka_dosya().json(path, []))
+        return self._anket_sayim[1] or []
     def anket_sonuc_aday(self):
         """'Kapanınca sonucu sınıfa göster' denmiş, bu sınıfta kapanmış (son 7 gün) anket."""
         import datetime
@@ -5965,23 +6107,22 @@ class Window(QMainWindow):
         if es is None: return
         try: es.update_kagit(st, plan)
         except Exception: pass
-        try:
-            with open(os.path.join(self.yok_dir(), 'duyuru-gelen.json'), encoding='utf-8') as f: lst = json.load(f)
-        except (OSError, ValueError): return
+        yol_ = os.path.join(self.yok_dir(), 'duyuru-gelen.json'); sm_ = arka_dosya().surum(yol_)   # K-434: diske gitmeden, değişmedikçe yeniden çözmeden
+        if sm_ < 0: return
+        if getattr(self, '_duyuru_gelen', (None, None))[0] != (yol_, sm_): self._duyuru_gelen = ((yol_, sm_), arka_dosya().json(yol_))
+        lst = self._duyuru_gelen[1]
+        if not isinstance(lst, list): return
         seen = self.duyuru_seen_ids()
         mine = [d for d in lst if isinstance(d, dict) and not d.get('tur') and d.get('tarih') == st['date'].isoformat() and d.get('ders') == st['lesson']
                 and ('*' in d.get('hedef', []) or plan['sinif'] in d.get('hedef', [])) and d.get('id') not in seen]
         if mine: es.show_duyuru(max(mine, key=lambda d: d.get('zaman', 0)))
     def duyuru_seen_ids(self):
-        try:
-            with open(os.path.join(self.yok_dir(), 'duyuru-okundu.json'), encoding='utf-8') as f: return set(json.load(f))
-        except (OSError, ValueError, TypeError): return set()
+        try: return set(arka_dosya().json(os.path.join(self.yok_dir(), 'duyuru-okundu.json'), []) or [])   # K-434: diske gitmeden
+        except TypeError: return set()
     def duyuru_seen(self, i):
         if not i: return
         ids = sorted(self.duyuru_seen_ids() | {i})[-200:]
-        try:
-            with open(os.path.join(self.yok_dir(), 'duyuru-okundu.json'), 'w', encoding='utf-8') as f: json.dump(ids, f)
-        except OSError: pass
+        arka_dosya().yaz_json(os.path.join(self.yok_dir(), 'duyuru-okundu.json'), ids)
     # ---- Karargah (Öğretmenler odası) ----
     def karargah_exam(self):
         """Bugünün, şu an Karargah'ta gösterilecek kelebek sınavı: (plan, gün, ders, başlangıç, bitiş) — sınavdan 10 dk önce ile bitişten 15 dk sonra arası."""
@@ -6080,7 +6221,9 @@ class Window(QMainWindow):
             span = exam_span(now.weekday(), pl.get('ders'), now.date())
             if not span or t < span[1] + 60: continue
             key = self.yok_key(now.date(), pl['ders']); flag = os.path.join(self.yok_dir(), 'rapor-%s.tamam' % key)
-            if os.path.exists(flag): continue
+            tamam_ = self.__dict__.setdefault('_rapor_tamam', set())   # K-434: biten rapor için her saniye diske sorulmaz
+            if flag in tamam_: continue
+            if os.path.exists(flag): tamam_.add(flag); continue
             if t < span[1] + 180:   # son yoklamalar Drive'a ulaşsın
                 if time.monotonic() - getattr(self, 'kar_read_t', -1e9) > 30:
                     self.kar_read_t = time.monotonic(); self.run_havuz('--yoklama-oku', '', os.path.join(self.yok_dir(), 'tum.json'))
@@ -6383,7 +6526,7 @@ class Window(QMainWindow):
                 self.board.image = QImage(pix.samples,pix.width,pix.height,pix.stride,QImage.Format_RGB888).copy()
             al = (Qt.AlignHCenter | Qt.AlignTop) if self.endless() else Qt.AlignCenter   # sonsuz sayfa büyürken yerinden zıplamasın
             if self.scroll.alignment() != al: self.scroll.setAlignment(al)
-            self.board.setFixedSize(math.ceil(page.rect.width*self.zoom),math.ceil(page.rect.height*self.zoom)); self.board.update()
+            self.board.setFixedSize(math.ceil(page.rect.width*self.zoom),math.ceil(page.rect.height*self.zoom)); self.board.update(); self.board.hazirla_sonra()   # K-436
             QTimer.singleShot(0,self.scroll.viewport().update)   # gölge sayfanın yeni yerine
             self.page_label.setText('%s / %s  ·  %%%s' % (self.page+1,len(self.doc),round(self.zoom*100)))
             if hasattr(self,'nav'):self.place_overlays()
@@ -11796,7 +11939,7 @@ class ErisimYoneticisi:
     def kapat(self):
         import subprocess
         m = self.m; self.uyari.hide(); m._kapanis_onay = True
-        try: m.board.finish(); m.save_session()
+        try: m.board.finish(); m.save_session(); arka_dosya().bosalt()   # K-435: tahta kapanmadan kayıt diskte
         except Exception as e: print('kapanış kaydı:', e)
         try: self.uyanma_yaz(zorla=True)
         except Exception: pass
@@ -13313,13 +13456,11 @@ class AnketCanli(QWidget):
         self.main.run_havuz('--yoklama-oku', 'anketdurum_', os.path.join(self.main.data_dir, 'anketdurum-gelen.json'))
     def load(self):
         if self.a is None: return
-        try: m = os.path.getmtime(self.out_path())
-        except OSError: m = 0
+        m = arka_dosya().surum(self.out_path()) + 1   # K-434: diske gitmeden (yoksa 0)
         if m and m != self.out_m:
             self.out_m = m
-            try:
-                with open(self.out_path(), encoding='utf-8') as f: raw = json.load(f)
-            except (OSError, ValueError): raw = {}
+            raw = arka_dosya().json(self.out_path(), {})
+            if not isinstance(raw, dict): raw = {}
             self.files = {(v_ or {}).get('salon'): v_ for v_ in raw.values() if isinstance(v_, dict)}
         cevl, bek, say = anket_canli_veri(self.a, self.files); now = time.monotonic()
         for d in cevl:   # yeni gelen (ya da cevabını değiştiren) yukarıdan düşer; açılıştaki liste düşmez

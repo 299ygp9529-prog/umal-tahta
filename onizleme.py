@@ -310,3 +310,15 @@ try:
             print('gece', ad_, h_, 'yap', round(t1_ - t0_, 3), 'çiz', round(t2_ - t1_, 3))
             if h_ == 1080: pm_.save('/tmp/onizleme/gece-%s.png' % ad_)
 except Exception: _tb.print_exc()
+# K-424: coğrafya sınav teması
+try:
+    import time as _t2
+    for i_, tt_ in enumerate((1000.0, 1004.0)):
+        im_ = _QI(1920, 1080, _QI.Format_RGB32); im_.fill(QColor('#0d1726')); p_ = QPainter(im_)
+        t0_ = _t2.perf_counter(); tk.draw_exam_theme(p_, 1920, 1080, 1.0, 'harita', '#3fd0c9', tt_); print('cografya tema', round(_t2.perf_counter() - t0_, 4), 's'); p_.end(); im_.save('/tmp/onizleme/cografya-tema-%d.png' % i_)
+    plc_ = next(p for p in kb_['planlar'] if p['tarih'] == '2026-11-10'); slc_ = sorted(plc_['salonlar'], key=lambda s: -len(plc_['salonlar'][s]))[0]
+    tk.time = _t2; tk._PHOTOS['data'] = fot_; tk._PHOTOS['pix'] = {}
+    im_ = _QI(1920, 1080, _QI.Format_RGB32); im_.fill(QColor('#0d1726')); p_ = QPainter(im_)
+    tk._draw_seatmap(type('O', (), {})(), p_, 1920, 1080, 1.0, _font, dict(sinif=slc_, liste=plc_['salonlar'][slc_], tur='salon', saat='10.30 – 11.10'), '#5cc8ff', '#5cc8ff', '4. Ders · 10 Kasım'); p_.end()
+    im_.save('/tmp/onizleme/cografya-salon.png'); print('cografya salon tamam', slc_)
+except Exception: _tb.print_exc()

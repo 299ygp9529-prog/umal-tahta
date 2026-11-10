@@ -332,3 +332,11 @@ try:
     for _ in range(8): app.processEvents()
     d_.grab().save('/tmp/onizleme/bilet.png'); print('bilet tamam', d_.kart.isVisible(), d_.yer.isVisible()); d_.reject()
 except Exception: _tb.print_exc()
+# K-427: kâğıt eksik sınıf seviyesiyle
+try:
+    import datetime as _dt
+    ls_ = [dict(sinif=s, ders=d, sira=i + 1, no=str(900 + i), ad='X') for i, (s, d) in enumerate([('10-A', 'COĞRAFYA'), ('11-B', 'COĞRAFYA'), ('9-C', 'COĞRAFYA'), ('11-D', 'S. COĞRAFYA'), ('12-E', 'S. COĞRAFYA')])]
+    d_ = tk.SalonMesajDialog(w, dict(date=_dt.date.today(), lesson='4. Ders'), dict(sinif='10-C', liste=ls_)); d_.resize(1100, 1000); d_.show()
+    for _ in range(5): app.processEvents()
+    d_.grab().save('/tmp/onizleme/kagit-eksik.png'); print('kagit eksik tamam', list(d_.counts)); d_.reject()
+except Exception: _tb.print_exc()

@@ -273,3 +273,24 @@ try:
     ov.grab().save('/tmp/onizleme/acil-resim.png')
     ov.goster(dict(id='t2', resim_yol='/tmp/acil.jpg')); ov.repaint(); app.processEvents(); ov.grab().save('/tmp/onizleme/acil-resim2.png'); ov.hide(); print('acil resim tamam')
 except Exception: _tb.print_exc()
+# K-422: oturma planı çizimi önbellekli: eskiyle aynı mı, ne kadar sürüyor
+try:
+    import urllib.request as _ur, types as _ty
+    blob = _ur.urlopen(tk.KELEBEK_URLS[0], timeout=60).read(); kb_ = tk.kelebek_open(blob)
+    pl_ = kb_['planlar'][0]; sal_ = sorted(pl_['salonlar'], key=lambda s: -len(pl_['salonlar'][s]))[0]
+    plan_ = dict(sinif=sal_, liste=pl_['salonlar'][sal_], tur='salon', saat='10.30 – 11.10')
+    sp_ = importlib.util.spec_from_file_location('eski', _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'eski68.py')); es_ = importlib.util.module_from_spec(sp_); sp_.loader.exec_module(es_)
+    from PyQt5.QtGui import QImage as _QI, QFont as _QF
+    def _font(px, b=False):
+        f = _QF(tk.ui_fonts().get('Poppins-Medium') or 'Sans'); f.setPixelSize(int(px)); f.setBold(b); return f
+    res_ = {}
+    for ad_, m_ in (('eski', es_), ('yeni', tk)):
+        m_._PHOTOS['data'] = {}; m_.time = _ty.SimpleNamespace(**{a: getattr(time, a) for a in dir(time) if not a.startswith('_')}); m_.time.time = lambda: 1000.0
+        o_ = type('O', (), {})(); ts_ = []; ims_ = []
+        for i_ in range(3):
+            im_ = _QI(1920, 1080, _QI.Format_RGB32); p_ = QPainter(im_); t0_ = time.perf_counter()
+            m_._draw_seatmap(o_, p_, 1920, 1020, 1.0, _font, plan_, '#5cc8ff', '#5cc8ff', 'Coğrafya · 10 Kasım'); p_.end(); ts_.append(round(time.perf_counter() - t0_, 3)); ims_.append(im_)
+        res_[ad_] = ims_; print('seatmap', ad_, sal_, len(plan_['liste']), 'öğrenci, süre', ts_)
+    res_['yeni'][2].save('/tmp/onizleme/seatmap-yeni.png'); res_['eski'][0].save('/tmp/onizleme/seatmap-eski.png')
+    print('seatmap ayni:', res_['eski'][0] == res_['yeni'][0], res_['eski'][0] == res_['yeni'][2])
+except Exception: _tb.print_exc()

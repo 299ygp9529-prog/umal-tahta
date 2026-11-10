@@ -264,3 +264,12 @@ try:
         ae.grab().scaled(960, 540, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).save('/tmp/onizleme/anma-%d.png' % k_)
     ae.bitir(); print('anma tamam')
 except Exception: _tb.print_exc()
+# K-415: acil mesaj fotoğraflı
+try:
+    from PyQt5.QtGui import QImage as _QI
+    im = _QI(1200, 800, _QI.Format_RGB32); im.fill(QColor('#3a3a3a')); p_ = QPainter(im); p_.setPen(QColor('white')); p_.drawText(im.rect(), Qt.AlignCenter, 'FOTOĞRAF'); p_.end(); im.save('/tmp/acil.jpg')
+    ov = tk.AcilMesaj(w); ov.setGeometry(w.rect()); ov.goster(dict(id='t', baslik='Saygı Duruşu', metin="Saat 09.05'te saygı duruşu ve İstiklal Marşı", resim_yol='/tmp/acil.jpg')); ov.show(); ov.raise_()
+    for _ in range(5): app.processEvents()
+    ov.grab().save('/tmp/onizleme/acil-resim.png')
+    ov.goster(dict(id='t2', resim_yol='/tmp/acil.jpg')); ov.repaint(); app.processEvents(); ov.grab().save('/tmp/onizleme/acil-resim2.png'); ov.hide(); print('acil resim tamam')
+except Exception: _tb.print_exc()

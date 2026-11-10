@@ -414,7 +414,16 @@ def make_board(background='white', width=960, height=540):
         page.draw_rect(page.rect,color=None,fill=BOARD_FILLS[background])
         if background in KARA_TAHTALAR:
             gruplar = {}   # aynı renk / opaklıktakiler tek yol: PDF hafif kalır
-            for d in kt_desen(background, 0, 0, width, height):
+            ds_ = kt_desen(background, 0, 0, width, height)
+            if background == 'kt_gece':   # K-422: ızgara noktaları tek tek daire değil, satır başına bir noktalı çizgi (uzun tahtada uzatma 10 sn donduruyordu)
+                izg = lambda d: d[0] == 'n' and d[3] == .8 and d[4] == (.5, .85, 1) and d[5] == .16
+                xs_ = sorted({d[1] for d in ds_ if izg(d)}); ys_ = sorted({d[2] for d in ds_ if izg(d)})
+                if xs_ and ys_:
+                    sh = page.new_shape()
+                    for y_ in ys_: sh.draw_line((xs_[0], y_), (xs_[-1], y_))
+                    sh.finish(color=(.5, .85, 1), width=1.6, stroke_opacity=.16, dashes='[0 20] 0', lineCap=1); sh.commit()
+                ds_ = [d for d in ds_ if not izg(d)]
+            for d in ds_:
                 anahtar = (d[0], d[5], d[6], d[7]) if d[0] == 'c' else (d[0], d[4], d[5]) if d[0] == 'n' else (d[0], d[5], d[6])
                 gruplar.setdefault(anahtar, []).append(d)
             for anahtar, ds in gruplar.items():
@@ -3022,6 +3031,8 @@ class Board(QWidget):
             return True
         if pal and not fingers: return True   # yalnız avuç: yok say
         active = fingers
+        if getattr(self.owner, 'tool', '') in ('pen', 'highlight', 'dash', 'smart', 'arrow', 'laser') and not getattr(self, 'gesture', None):
+            return False   # K-423: kalem araçlarında iki parmak yakınlaştırmaz / geri almaz; ikinci temas yok sayılır, çizgi ilk temasla sürer
         # Screen mode has no page to zoom: two fingers are only a Geri al tap there.
         tap_only = getattr(self.owner, 'overlay_mode', False) or not hasattr(self.owner, 'scroll')
         if len(active) == 2 or getattr(self, 'gesture', None):
@@ -7376,14 +7387,35 @@ def draw_exam_theme(p, W, H, k, kind, color, t):
             x = i*step + off % step; pen(50, 3); p.drawLine(QPointF(x, y - 14*k), QPointF(x, y + 14*k))
             pen(34, 3); p.drawEllipse(QPointF(x, y), 6*k, 6*k)   # yıl yazılmaz (ipucu olmasın)
         pen(26, 2); p.drawEllipse(QPointF(W*.9, H*.22), 120*k, 120*k); p.drawLine(QPointF(W*.9, H*.22), QPointF(W*.9, H*.22 - 80*k)); p.drawLine(QPointF(W*.9, H*.22), QPointF(W*.9 + 55*k, H*.22))
-    elif kind == 'harita':
-        cx, cy, R = W*.84, H*.3, 230*k
-        pen(34, 2); p.drawEllipse(QPointF(cx, cy), R, R)
-        for i in range(1, 6): p.drawEllipse(QPointF(cx, cy), R*abs(math.cos(i*math.pi/6 + drift*math.pi)), R)
-        for i in range(1, 6): y = cy - R + 2*R*i/6; hw = math.sqrt(max(0, R*R - (y - cy)**2)); p.drawLine(QPointF(cx - hw, y), QPointF(cx + hw, y))
-        for i in range(5):
-            pts = [QPointF(x, H*(.55 + i*.09) + 22*k*math.sin(x/(130*k) + i + drift*6)) for x in range(0, int(W*.7), 12)]
-            pen(22, 2); p.drawPolyline(QPolygonF(pts))
+    elif kind == 'harita':   # K-424: coğrafya: katman katman dağlar, ova, sis, yağmur; altta soluk "COĞRAFYA SINAVI"
+        from PyQt5.QtGui import QPainterPath, QRadialGradient
+        def dag(taban, tepe, dalga, faz, alfa, hiz):
+            yol = QPainterPath(); yol.moveTo(0, H); o_ = (t*hiz) % (W*2)
+            for x in range(0, int(W) + 41, 40):
+                u = (x + o_)/W
+                y = taban - tepe*(.55 + .45*math.sin(u*dalga + faz))*(.6 + .4*abs(math.sin(u*dalga*.37 + faz*1.7)))
+                yol.lineTo(x, y)
+            yol.lineTo(W, H); yol.closeSubpath()
+            q = QColor(c); q.setAlpha(alfa); p.setPen(Qt.NoPen); p.setBrush(q); p.drawPath(yol)
+        dag(H*.80, 330*k, 5.0, 0.3, 16, 2.0*k)    # uzak sıradağlar
+        dag(H*.88, 230*k, 7.5, 2.1, 22, 4.5*k)    # orta tepeler
+        ova = QColor(c); ova.setAlpha(30); p.setBrush(ova); p.drawRect(QRectF(0, H*.93, W, H*.07))   # ova
+        for i in range(4):   # sis bantları: yavaşça kayar
+            fx = ((t*(6 + i*2)*k + i*W*.37) % (W*1.6)) - W*.3; fy = H*(.62 + i*.07)
+            g = QRadialGradient(QPointF(fx, fy), 420*k); q = QColor('#dfe9f2'); q.setAlpha(26); g.setColorAt(0, q); q.setAlpha(0); g.setColorAt(1, q)
+            p.save(); p.translate(fx, fy); p.scale(1, .22); p.translate(-fx, -fy); p.setBrush(g); p.drawEllipse(QPointF(fx, fy), 420*k, 420*k); p.restore()
+        for i in range(3):   # bulutlar
+            bx = ((t*3*k + i*W*.41) % (W*1.3)) - W*.15; by = H*(.12 + i*.09)
+            q = QColor('#e8f1f8'); q.setAlpha(14); p.setBrush(q)
+            for dx_, dy_, rr in ((0, 0, 60), (55, -18, 48), (105, 2, 56), (50, 16, 52)): p.drawEllipse(QPointF(bx + dx_*k, by + dy_*k), rr*k*1.4, rr*k*.8)
+        rq = QColor('#bfe3ff'); rq.setAlpha(34); p.setPen(QPen(rq, 1.4*k)); p.setBrush(Qt.NoBrush)
+        for i in range(70):   # yağmur: eğik ince çizgiler
+            x0 = ((i*0.6180339887) % 1)*W; sp = (700 + (i*53) % 400)*k
+            y0 = ((t*sp + i*97*k) % (H*1.1)) - H*.05; x0 = (x0 - (t*sp*.18)) % W
+            p.drawLine(QPointF(x0, y0), QPointF(x0 - 7*k, y0 + 26*k))
+        fw = QFont(); fw.setPixelSize(int(96*k)); fw.setBold(True); fw.setLetterSpacing(QFont.AbsoluteSpacing, 18*k)
+        wq = QColor(c); wq.setAlpha(26); p.setFont(fw); p.setPen(wq)
+        p.drawText(QRectF(0, H*.80, W, H*.14), Qt.AlignCenter, 'COĞRAFYA SINAVI')
     elif kind == 'yildiz':
         r = 70*k; step = r*2.6; off = drift*step
         for row in range(-1, int(H/step) + 2):
@@ -8465,8 +8497,9 @@ class OgrenciAraDialog(QDialog):
         c_ = QPushButton('Kapat'); c_.setFocusPolicy(Qt.NoFocus); c_.clicked.connect(self.reject); h.addWidget(c_); v.addLayout(h)
         self.edit = QLineEdit(); self.edit.setPlaceholderText('Okul numaranız ya da adınız'); v.addWidget(self.edit)
         self.res = QLabel('Okul numaranızı ya da adınızın bir kısmını yazın.'); self.res.setTextFormat(Qt.RichText); self.res.setWordWrap(True)
-        self.res.setMinimumHeight(330); self.res.setAlignment(Qt.AlignTop | Qt.AlignLeft); self.res.setStyleSheet('QLabel{color:#9fb3cc;font-size:20px;}'); v.addWidget(self.res)
-        self.yer = QPushButton('📍  Yerimi göster'); self.yer.setFocusPolicy(Qt.NoFocus); self.yer.hide(); self.yer_bilgi = None   # K-383: salon planında sırası yanıp söner
+        self.res.setMinimumHeight(330); self.res.setAlignment(Qt.AlignTop | Qt.AlignLeft); self.res.setStyleSheet('QLabel{color:#9fb3cc;font-size:20px;}')
+        self.kart = BiletKart(self); v.addWidget(self.kart); v.addWidget(self.res)   # K-425: tek öğrencide uçak bileti
+        self.yer = QPushButton('Yerimi göster  ›'); self.yer.setFocusPolicy(Qt.NoFocus); self.yer.hide(); self.yer_bilgi = None   # K-383: salon planında sırası yanıp söner
         self.yer.setStyleSheet('QPushButton{background:#22e8ff;color:#04202a;border:none;border-radius:12px;padding:14px 22px;font-size:24px;font-weight:800;}')
         self.yer.clicked.connect(self.yer_goster); v.addWidget(self.yer)
         kb = attach_touch_keyboard(self, self.edit, v); kb.attach(self.edit); kb.set_shift(False); kb.show()
@@ -8477,13 +8510,36 @@ class OgrenciAraDialog(QDialog):
     def search(self, q):
         try: rs = self.main.ogrenci_ara(q)
         except Exception as e: rs = []; print('ara:', e)
-        self.yer.hide(); self.yer_bilgi = None
+        self.yer.hide(); self.yer_bilgi = None; self.kart.gizle(); self.res.setMinimumHeight(330)
         if not q.strip(): self.res.setText('Okul numaranızı ya da adınızın bir kısmını yazın.'); return
         if not rs: self.res.setText('<span style="color:#ffb020">Bulunamadı.</span> Adınızı ya da numaranızı kontrol edin.'); return
         if len(rs) == 1 and rs[0][1]:
             (day, _), lab, now_, ders, s_, sira, crs = rs[0][1][0]
             self.yer_bilgi = (day, ders, s_, sira, str(rs[0][0].get('no', '')))
-            self.yer.setText('📍  Yerimi göster  ·  Salon %s · Sıra %s' % (s_, sira)); self.yer.show()
+            self.yer.setText('Yerimi göster  ·  Salon %s · Sıra %s  ›' % (s_, sira)); self.yer.show()
+        if len(rs) == 1 and rs[0][1]:   # K-425: tek öğrenci: uçak bileti; altında sonraki sınavlar
+            try:
+                r0, ws = rs[0]; (day, a_), lab, now_, ders, s_, sira, crs = ws[0]; no_ = str(r0.get('no', ''))
+                sp_ = exam_span(day.weekday(), ders, day); hm_ = lambda x: '%02d.%02d' % (x//3600, x%3600//60)
+                pm = student_photo(no_) if BOARD_PHOTOS else None
+                pl0 = next((pl for pl in (self.main.kelebek or {}).get('planlar', []) if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders), {})
+                gz_ = str((pl0.get('gozcu') or {}).get(s_) or '').strip()
+                if not gz_:   # kelebekte gözcü yoksa ders programından (salon ekranındaki gibi)
+                    try: gz_ = ', '.join(tr_name(o) for o in ((lesson_cell(s_, day.weekday(), int(str(ders).split('.')[0])) or {}).get('ogretmen') or []))
+                    except (ValueError, TypeError): gz_ = ''
+                self.kart.goster(dict(ad=tr_name(r0.get('ad', '')), no=no_, sinif=str(r0.get('sinif', '')), ders=crs or '—', salon=str(s_), sira=sira,
+                                      tarih='%d %s %s' % (day.day, TR_MONTHS[day.month-1], ('Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz')[day.weekday()]), saatadi=ders.replace('Ders', 'ders'),
+                                      saat='%s – %s' % (hm_(sp_[0]), hm_(sp_[1])) if sp_ else '—', baslar=hm_(sp_[0]) if sp_ else '—',
+                                      renk=grade_color(r0.get('sinif'), '#22e8ff'), foto=pm, tur=tr_title(pl0.get('sinav') or '') or 'Sınav',
+                                      gozcu=tr_name(gz_) if len(gz_.replace(',', ' ').split()) >= 2 else '', kod='%02d%02d' % (day.day, day.month)))
+                esc_ = lambda x: str(x).replace('&', '&amp;').replace('<', '&lt;')
+                self.res.setMinimumHeight(0)
+                gk_ = lambda d_: '%d %s %s' % (d_.day, TR_MONTHS[d_.month-1][:3], ('Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz')[d_.weekday()])
+                mini = ''.join('<td style="background:#132440;padding:12px 18px;"><span style="color:#22e8ff;font-size:20px;font-weight:700">%s · %s</span><br>'
+                               '<span style="color:#ffffff;font-size:19px">%s → %s · Sıra %s</span></td>' % (esc_(gk_(w[0][0])), esc_(w[3].replace('Ders', 'ders')), esc_(w[6] or ''), esc_(w[4]), esc_(w[5])) for w in ws[1:4])
+                self.res.setText(('<div style="color:#8fa6c4;font-size:15px;font-weight:700;letter-spacing:2px">DİĞER SINAVLARI</div><table cellspacing="10"><tr>%s</tr></table>' % mini) if mini else '')
+                return
+            except Exception as e: self.kart.gizle(); print('bilet:', e)
         photo = None
         if len(rs) == 1 and rs[0][1] and BOARD_PHOTOS:   # tek öğrenci: biletin solunda fotoğrafı (gizli listede olanlar hariç)
             try:
@@ -8504,6 +8560,134 @@ class OgrenciAraDialog(QDialog):
             if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders: lst = pl.get('salonlar', {}).get(salon); break
         if not lst: return
         self.idle.stop(); d_ = YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira); d_.exec_(); self.idle.start(60000)
+
+class BiletKart(QWidget):
+    """K-425: web paneldeki uçak bileti (Sınav Merkezi / Öğrenciler araması) tahtada birebir: 900x363 ölçülerinde tasarlanır, genişliğe göre büyür.
+    Solda fotoğraf, ad, okul no, sınıf, sınav; KENDİ SINIFI ✈ SINAV SALONU; tarih, ders, saat, gözcü; sağ koçanda salon, sıra, başlama saati, barkod."""
+    BW, BH = 900.0, 363.0
+    def __init__(self, parent=None):
+        super().__init__(parent); self.d = None; self.hide()
+        self.tm = QTimer(self); self.tm.setInterval(60); self.tm.timeout.connect(self.update)
+    def goster(self, d):
+        self.d = d; self.show(); self.tm.start(); self.updateGeometry(); self.update()
+    def gizle(self):
+        self.d = None; self.tm.stop(); self.hide()
+    def resizeEvent(self, e):
+        h_ = int(min(self.width(), 1000)*self.BH/self.BW) + 24
+        if self.minimumHeight() != h_: self.setMinimumHeight(h_)
+        super().resizeEvent(e)
+    def hasHeightForWidth(self): return True
+    def heightForWidth(self, w): return int(w*self.BH/self.BW) + 24
+    def sizeHint(self):
+        from PyQt5.QtCore import QSize
+        return QSize(1100, self.heightForWidth(1100))
+    def paintEvent(self, e):
+        if not self.d: return
+        from PyQt5.QtGui import QFont, QLinearGradient, QPainterPath, QFontMetrics
+        d = self.d; p = QPainter(self); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.SmoothPixmapTransform)
+        k = min((self.width() - 8)/self.BW, (self.height() - 20)/self.BH); ox = (self.width() - self.BW*k)/2; oy = 10
+        p.translate(ox, oy); p.scale(k, k)
+        fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+        def F(px, w=1, ls=0):
+            f = QFont(famb if w else fam); f.setPixelSize(max(1, int(round(px*k)))); f.setWeight({0: QFont.Medium, 1: QFont.Bold, 2: QFont.Black}[w])
+            if ls: f.setLetterSpacing(QFont.AbsoluteSpacing, ls*k)
+            p.setFont(f); return f
+        def T(x, y, w, h, s_, f, c, al=Qt.AlignLeft | Qt.AlignVCenter, glow=None):
+            p.save(); p.scale(1/k, 1/k); r = QRectF(x*k, y*k, w*k, h*k); p.setFont(f)   # yazı ekran pikselinde (keskin)
+            if glow:
+                g_ = QColor(glow)
+                for a_, o_ in ((40, 4), (80, 2)):
+                    g_.setAlpha(a_); p.setPen(g_)
+                    for dx_, dy_ in ((-o_, 0), (o_, 0), (0, -o_), (0, o_)): p.drawText(r.translated(dx_*k, dy_*k), al, s_)
+            p.setPen(QColor(c)); p.drawText(r, al, s_); p.restore()
+        def adv(f, s_): return QFontMetrics(f).horizontalAdvance(s_)/k
+        MW = 608.0; R = 16.0
+        def kesik(rect, sol):   # biletin iki parçası: dış köşeler yuvarlak, birleşim yerinde üstte ve altta yarım daire oyuk
+            pa = QPainterPath(); pa.addRoundedRect(rect.adjusted(-30 if not sol else 0, 0, 30 if sol else 0, 0), 22, 22)
+            cut = QPainterPath(); cut.addRect(QRectF(rect.right(), -5, 40, self.BH + 10) if sol else QRectF(rect.left() - 40, -5, 40, self.BH + 10)); pa = pa.subtracted(cut)
+            for cy_ in (0, self.BH):
+                o_ = QPainterPath(); o_.addEllipse(QPointF(MW, cy_), R, R); pa = pa.subtracted(o_)
+            return pa
+        ana = kesik(QRectF(0, 0, MW, self.BH), True); koc = kesik(QRectF(MW, 0, self.BW - MW, self.BH), False)
+        for i_ in range(6, 0, -1):   # gölge ve soluk camgöbeği ışıma (paneldeki drop-shadow)
+            p.setPen(Qt.NoPen); p.setBrush(QColor(34, 232, 255, 5)); p.save(); p.translate(0, 3); p.drawPath(ana.united(koc).translated(0, 0)); p.restore()
+            p.setBrush(QColor(0, 0, 0, 14)); p.drawPath(ana.united(koc).translated(0, i_*2.2))
+        g = QLinearGradient(QPointF(0, 0), QPointF(MW, self.BH)); g.setColorAt(0, QColor('#16305a')); g.setColorAt(.55, QColor('#12233f')); g.setColorAt(1, QColor('#0f1c33'))
+        p.setBrush(g); p.drawPath(ana)
+        p.save(); p.setClipPath(ana); p.setPen(QPen(QColor(255, 255, 255, 7), 2))
+        for x_ in range(-400, int(MW) + 40, 9): p.drawLine(QPointF(x_, self.BH), QPointF(x_ + self.BH*.47, 0))
+        lg = QPixmap(LOGO_RESMI) if os.path.isfile(LOGO_RESMI) else QPixmap()
+        if not lg.isNull(): p.setOpacity(.07); p.drawPixmap(QRectF(MW - 200, self.BH - 190, 230, 230), lg, QRectF(lg.rect())); p.setOpacity(1)
+        p.restore()
+        if not lg.isNull(): p.drawPixmap(QRectF(26, 22, 34, 34), lg, QRectF(lg.rect()))
+        T(70, 22, 360, 34, 'ATLAS · SINAV KARTI', F(14, 1, 4), '#7ff6ff')
+        T(300, 22, MW - 26 - 300, 34, (d.get('tur') or 'Sınav').upper(), F(12, 1, 3), '#9fb3cc', Qt.AlignRight | Qt.AlignVCenter)
+        fr = QRectF(24, 70, 100, 128)
+        p.setPen(Qt.NoPen)
+        for w_, a_ in ((10, 30), (6, 50)): p.setPen(QPen(QColor(34, 232, 255, a_), w_)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(fr, 12, 12)
+        p.setPen(QPen(QColor('#ffffff'), 3)); p.setBrush(QColor('#b9c4d3')); p.drawRoundedRect(fr, 12, 12)
+        pm = d.get('foto'); cp = QPainterPath(); cp.addRoundedRect(fr.adjusted(1.5, 1.5, -1.5, -1.5), 10.5, 10.5)
+        p.save(); p.setClipPath(cp)
+        if pm is not None and not pm.isNull():
+            sc = max(fr.width()/pm.width(), fr.height()/pm.height()); w_, h_ = pm.width()*sc, pm.height()*sc
+            p.drawPixmap(QRectF(fr.center().x() - w_/2, fr.center().y() - h_/2, w_, h_), pm, QRectF(pm.rect()))
+        else:   # paneldeki gibi siluet
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#263752')); p.drawRect(QRectF(fr.x() + 21, fr.y() + 75, 58, 60))
+            p.setBrush(QColor('#e0bd9c')); p.drawEllipse(QPointF(fr.center().x(), fr.y() + 48), 21, 25)
+            p.setBrush(QColor('#4a2e1e')); pa_ = QPainterPath(); pa_.moveTo(fr.center().x() - 22, fr.y() + 44); pa_.arcTo(QRectF(fr.center().x() - 22, fr.y() + 20, 44, 40), 180, -180); pa_.closeSubpath(); p.drawPath(pa_)
+        p.restore()
+        T(140, 76, 440, 18, 'ÖĞRENCİ', F(11, 1, 2), '#8fa6c4')
+        fa = F(28, 1)
+        while adv(fa, d['ad']) > 445 and fa.pixelSize() > 14: fa.setPixelSize(fa.pixelSize() - 1)
+        T(140, 92, 450, 40, d['ad'], fa, '#ffffff')
+        x_ = 140
+        for lab_, val_, col_ in (('OKUL NO', d['no'], '#ffffff'), ('SINIF', d['sinif'], '#ffffff'), ('SINAV', d['ders'], '#ffe14d')):
+            fv = F(18, 1); vw = adv(fv, val_) + (18 if lab_ == 'SINIF' else 0); fl_ = F(11, 1, 2)
+            T(x_, 132, 300, 16, lab_, fl_, '#ffe14d' if lab_ == 'SINAV' else '#8fa6c4')
+            vx = x_
+            if lab_ == 'SINIF':
+                sv = QColor(d.get('renk') or '#22e8ff'); q_ = QColor(sv); q_.setAlpha(80); p.setPen(Qt.NoPen); p.setBrush(q_); p.drawEllipse(QPointF(vx + 6, 162), 8, 8); p.setBrush(sv); p.drawEllipse(QPointF(vx + 6, 162), 5, 5); vx += 17
+            rest = MW - 26 - vx
+            while lab_ == 'SINAV' and adv(fv, val_) > rest and fv.pixelSize() > 10: fv.setPixelSize(fv.pixelSize() - 1)
+            T(vx, 148, rest, 28, val_, fv, col_)
+            x_ += max(adv(fl_, lab_), vw) + 28
+        T(26, 216, 260, 18, 'KENDİ SINIFI', F(12, 0), '#9fb3cc')
+        fb = F(42, 2); T(26, 232, 260, 52, d['sinif'], fb, '#ffffff')
+        T(300, 216, MW - 326, 18, 'SINAV SALONU', F(12, 0), '#9fb3cc', Qt.AlignRight | Qt.AlignVCenter)
+        T(260, 232, MW - 286, 52, d['salon'], fb, '#22e8ff', Qt.AlignRight | Qt.AlignVCenter, glow='#22e8ff')
+        lx0 = 26 + adv(fb, d['sinif']) + 18; lx1 = MW - 26 - adv(fb, d['salon']) - 18; ly = 254
+        pn = QPen(QColor('#3a5a86'), 2); pn.setDashPattern([4, 3]); p.setPen(pn); p.drawLine(QPointF(lx0, ly), QPointF(lx1, ly))
+        if lx1 > lx0 + 50:
+            u = .5 + .12*math.sin(time.time()*2*math.pi/2.4); ux = lx0 + (lx1 - lx0)*u
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#14284a')); p.drawRoundedRect(QRectF(ux - 15, ly - 15, 30, 30), 5, 5)
+            pl_ = QPainterPath()   # sağa uçan uçak (gövde, kanatlar, kuyruk)
+            for pts_ in (((-11, -1.6), (9, -1.6), (12, 0), (9, 1.6), (-11, 1.6)), ((-1, -1.5), (-5, -10), (-2, -10), (5, -1.5)), ((-1, 1.5), (-5, 10), (-2, 10), (5, 1.5)), ((-10, -1), (-13, -6), (-11, -6), (-7, -1)), ((-10, 1), (-13, 6), (-11, 6), (-7, 1))):
+                pl_.moveTo(ux + pts_[0][0], ly + pts_[0][1])
+                for a_, b_ in pts_[1:]: pl_.lineTo(ux + a_, ly + b_)
+                pl_.closeSubpath()
+            for w_, a_ in ((6, 50), (3, 90)): p.setPen(QPen(QColor(34, 232, 255, a_), w_)); p.setBrush(Qt.NoBrush); p.drawPath(pl_)
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#22e8ff')); p.drawPath(pl_)
+        pn = QPen(QColor(127, 246, 255, 64), 1); pn.setDashPattern([3, 3]); p.setPen(pn); p.drawLine(QPointF(26, 292), QPointF(MW - 26, 292))
+        cols = [('TARİH', d['tarih']), ('DERS', d['saatadi']), ('SAAT', d['saat'])] + ([('GÖZCÜ', d['gozcu'])] if d.get('gozcu') else [])
+        cw = (MW - 52)/len(cols)
+        for i_, (lab_, val_) in enumerate(cols):
+            T(26 + i_*cw, 308, cw, 16, lab_, F(11, 1, 2), '#8fa6c4')
+            fv = F(17, 1)
+            while adv(fv, val_) > cw - 8 and fv.pixelSize() > 10: fv.setPixelSize(fv.pixelSize() - 1)
+            T(26 + i_*cw, 324, cw - 6, 28, val_, fv, '#ffffff')
+        g2 = QLinearGradient(QPointF(MW, 0), QPointF(self.BW, self.BH)); g2.setColorAt(0, QColor('#22e8ff')); g2.setColorAt(1, QColor('#1aa9d6'))
+        p.setPen(Qt.NoPen); p.setBrush(g2); p.drawPath(koc)
+        pn = QPen(QColor(6, 32, 43, 90), 2); pn.setDashPattern([3, 3]); p.setPen(pn); p.drawLine(QPointF(MW + 1, R + 4), QPointF(MW + 1, self.BH - R - 4))
+        kx = MW + 22; kw = self.BW - MW - 44
+        T(kx, 24, kw, 18, 'SALON', F(11, 1, 2), '#0b4b5c'); T(kx, 40, kw, 40, d['salon'], F(30, 2), '#06202b')
+        T(kx, 86, kw, 18, 'SIRA', F(11, 1, 2), '#0b4b5c'); T(kx, 98, kw, 72, str(d['sira']), F(64, 2), '#06202b')
+        T(kx, 170, kw, 18, 'SINAV BAŞLIYOR', F(11, 1, 2), '#0b4b5c'); T(kx, 186, kw, 26, d['baslar'], F(16, 1), '#06202b')
+        bt = 220; bh = 46; p.setPen(Qt.NoPen); p.setBrush(QColor(6, 32, 43, 230)); x_ = kx; i_ = 0
+        while x_ < kx + kw - 1:
+            w_ = (2, 1, 3, 1, 1, 2)[i_ % 6]; gap_ = (2, 1, 1, 3, 1, 2)[(i_*5) % 6]
+            p.drawRect(QRectF(x_, bt, min(w_, kx + kw - x_), bh)); x_ += w_ + gap_; i_ += 1
+        T(kx, bt + bh + 6, kw, 18, 'UMAL · %s · %s' % (d['no'], d.get('kod', '')), F(11, 1, 3), '#06202b', Qt.AlignCenter)
+        p.end()
 
 class YerimDialog(QDialog):
     """K-383: 'Yerimi göster' — salonun gerçek oturma düzeni; öğrencinin sırası neon çerçeveyle yanıp söner (web paneldeki 'Planda gör' gibi).
@@ -8598,11 +8782,13 @@ class SalonMesajDialog(QDialog):
         v = QVBoxLayout(self); v.setSpacing(10)
         t_ = QLabel('Salon %s  ·  %s' % (plan['sinif'], st['lesson'])); t_.setStyleSheet('QLabel{font-size:24px;font-weight:700;}'); v.addWidget(t_)
         day = st['date'].isoformat(); courses = []
-        for r in plan['liste']:
+        for r in plan['liste']:   # K-427: ders sınıf seviyesiyle (10. sınıf Coğrafya, 11. sınıf Coğrafya ayrı kâğıt)
             c = tr_title(r.get('ders')) or exam_course(day, st['lesson'], r.get('sinif'), '')
+            g_ = class_grade(r.get('sinif'))
+            if c: c = ('%s. sınıf %s' % (g_, c)) if g_ else c
             if c and c not in courses: courses.append(c)
-        courses.sort(key=lambda c: (c.startswith('S. '), c))
-        h_ = QLabel('Kâğıt eksik  (hangi dersten kaç tane)'); h_.setStyleSheet('QLabel{color:#ffd78a;font-size:21px;font-weight:700;}'); v.addWidget(h_)
+        courses.sort(key=lambda c: (int(c.split('.')[0]) if c.split('.')[0].isdigit() else 99, c.split(' ', 2)[-1].startswith('S. '), c))
+        h_ = QLabel('Kâğıt eksik  (hangi sınıfın hangi dersinden kaç tane)'); h_.setStyleSheet('QLabel{color:#ffd78a;font-size:21px;font-weight:700;}'); v.addWidget(h_)
         self.counts = {}; grid = QGridLayout(); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(8)
         for i, c in enumerate(courses):
             lab = QLabel(c); mn = QPushButton('−'); pl_ = QPushButton('+'); n_ = QLabel('0')

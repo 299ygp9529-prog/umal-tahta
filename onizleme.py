@@ -287,18 +287,13 @@ try:
     res_ = {}
     for ad_, m_ in (('eski', es_), ('yeni', tk)):
         m_._PHOTOS['data'] = fot_; m_._PHOTOS['pix'] = {}; m_._PHOTOS['img'] = {}
-        if ad_ == 'yeni':
-            t1_ = time.perf_counter(); m_.foto_on_coz([r.get('no') for r in plan_['liste']])
-            import threading as _th
-            while any(t_.name != 'MainThread' and t_.is_alive() for t_ in _th.enumerate()) and time.perf_counter() - t1_ < 30: time.sleep(0.05)
-            print('foto ön çözme', round(time.perf_counter() - t1_, 2), 's', len(m_._PHOTOS['img']))
         m_.time = _ty.SimpleNamespace(**{a: getattr(time, a) for a in dir(time) if not a.startswith('_')}); m_.time.time = lambda: 1000.0
         o_ = type('O', (), {})(); ts_ = []; ims_ = []
         for i_ in range(3):
             im_ = _QI(1920, 1080, _QI.Format_RGB32); p_ = QPainter(im_); t0_ = time.perf_counter()
-            m_._draw_seatmap(o_, p_, 1920, 1020, 1.0, _font, plan_, '#5cc8ff', '#5cc8ff', 'Coğrafya · 10 Kasım'); p_.end(); ts_.append(round(time.perf_counter() - t0_, 3)); ims_.append(im_)
+            (m_._draw_seatmap_onbellek if ad_ == 'yeni' else m_._draw_seatmap)(o_, p_, 1920, 1020, 1.0, _font, plan_, '#5cc8ff', '#5cc8ff', 'Coğrafya · 10 Kasım'); p_.end(); ts_.append(round(time.perf_counter() - t0_, 3)); ims_.append(im_)
         res_[ad_] = ims_; print('seatmap', ad_, sal_, len(plan_['liste']), 'öğrenci, süre', ts_)
-    res_['yeni'][0].save('/tmp/onizleme/seatmap-yeni.png'); res_['eski'][0].save('/tmp/onizleme/seatmap-eski.png')
+    res_['yeni'][2].save('/tmp/onizleme/seatmap-yeni.png'); print('koltuk', len(getattr(o_, 'seat_rects', {}))); res_['eski'][0].save('/tmp/onizleme/seatmap-eski.png')
     print('seatmap ayni:', res_['eski'][0] == res_['yeni'][0], res_['eski'][0] == res_['yeni'][2])
 except Exception: _tb.print_exc()
 # K-422b: gece kara tahta: noktalı çizgi ile aynı görüntü mü, uzatma ne kadar sürüyor

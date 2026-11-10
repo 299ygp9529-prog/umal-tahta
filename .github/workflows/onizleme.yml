@@ -59,13 +59,27 @@ jobs:
           import -window root /tmp/onizleme-yazi.png || true
           sleep 60; echo "=== ana iş parçacığı disk izleri"; cat /tmp/iz.out || true
           tail -20 /tmp/tahta.log || true
+      - name: Ölçüm (disk 2 sn gecikirken ekran bloklanması)
+        run: |
+          export DISPLAY=:1 LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
+          kos() { # modül etiket senaryo N
+            rm -rf /tmp/olcum-veri; mkdir -p /tmp/olcum-veri/umal-tahta; echo '{"sinif": "9-A"}' > /tmp/olcum-veri/umal-tahta/tahta.json
+            XDG_DATA_HOME=/tmp/olcum-veri timeout $((120 + $4 * 14)) python3 olcum.py "$1" "$2" "$3" "$4" > /tmp/olcum-son.txt 2>&1 || true
+            grep '^SONUC' /tmp/olcum-son.txt >> /tmp/olcum.txt || { echo "SONUC-YOK $2 $3 $4" >> /tmp/olcum.txt; tail -15 /tmp/olcum-son.txt >> /tmp/olcum-hata.txt; }
+          }
+          YENI=/usr/share/tahta-kalem/tahta_kalem.py; ESKI=$PWD/eski71.py
+          kos $YENI yeni kontrol 1; kos $YENI yeni ilk 1; kos $ESKI eski ilk 1
+          kos $ESKI eski kalem 10; kos $YENI yeni kalem 10; kos $YENI yeni kalem 50; kos $YENI yeni kalem 100
+          kos $ESKI eski sayfa 10; kos $YENI yeni sayfa 10
+          kos $YENI yeni hata 1; kos $YENI yeni kapanis 1; kos $ESKI eski kapanis 1
+          cat /tmp/olcum.txt; cat /tmp/olcum-hata.txt 2>/dev/null || true
       - name: Önizlemeler
         run: |
           mkdir -p /tmp/onizleme; timeout 300 python3 onizleme.py > /tmp/onizleme-log.txt 2>&1 || true; tail -20 /tmp/onizleme-log.txt
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum
-          cp /tmp/ilk.png /tmp/onizleme-yazi.png /tmp/onizleme/*.png . 2>/dev/null || true; cp /tmp/iz.out iz.txt 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
+          cp /tmp/ilk.png /tmp/onizleme-yazi.png /tmp/onizleme/*.png . 2>/dev/null || true; cp /tmp/iz.out iz.txt 2>/dev/null || true; cp /tmp/olcum.txt /tmp/olcum-hata.txt . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
           cp /tmp/onizleme-log.txt . 2>/dev/null || true; date -u +%FT%TZ > zaman.txt
           git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-onizleme-durum

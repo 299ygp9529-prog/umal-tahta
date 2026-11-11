@@ -6368,9 +6368,27 @@ class Window(QMainWindow):
         if m < 0: return {}
         if getattr(self, '_yok_all', (None, None))[0] != m:
             v = arka_dosya().json(path)
-            if v is None: return getattr(self, '_yok_all', (None, {}))[1] or {}
+            if v is None: return self.elle_ustune(getattr(self, '_yok_all', (None, {}))[1] or {})
             self._yok_all = (m, v)
-        return self._yok_all[1]
+        return self.elle_ustune(self._yok_all[1])
+    def elle_ustune(self, d):
+        """K-457: elle girilen yoklama, salon tahtası sonradan kendi kaydını Drive'a yazsa da Karargah'ta ve raporda geçerli kalır."""
+        e_ = self.elle_kayitlar()
+        if not e_: return d
+        out = dict(d)
+        for ad, v in e_.items():
+            if (out.get(ad) or {}).get('zaman', 0) <= v.get('zaman', 0) or (out.get(ad) or {}).get('kaynak') != 'panel': out[ad] = v
+        return out
+    def elle_kayitlar(self):
+        if getattr(self, '_elle', None) is None:   # açılışta bir kez diskten (bugünün kayıtları)
+            self._elle = {}
+            try:
+                bugun = time.strftime('%Y-%m-%d')
+                for n_ in os.listdir(self.yok_dir()):
+                    if n_.startswith('elle-' + bugun) and n_.endswith('.json'):
+                        with open(os.path.join(self.yok_dir(), n_), encoding='utf-8') as f: self._elle[n_[5:]] = json.load(f)
+            except (OSError, ValueError): pass
+        return self._elle
     def send_duyuru(self, metin, hedef, ex, extra=None):
         path = os.path.join(self.yok_dir(), 'duyuru.json')
         try:
@@ -6501,8 +6519,23 @@ class Window(QMainWindow):
         if isinstance(d, dict) and (d.get('tam_ekran') or not self.isFullScreen()) and time.time() - d.get('zaman', 0) < 120:
             self.showFullScreen(); QTimer.singleShot(100, self.fit_page)   # açılış animasyonu yok · K-396: tahta hep tam ekranla döner
         self.statusBar().showMessage('Yeni sürümle açıldı: ' + version_label())
+    def elle_yoklama_yaz(self, veri):
+        """K-457: elle girilen yoklama (Öğretmenler odası tahtası ya da Okul Paneli): Drive'a ve Sınav merkezine salon tahtasının yazdığı yoldan.
+        Ekranda hemen görünsün diye Karargah'ın yoklama listesine de konur."""
+        ad = '%s_%s_%s.json' % (veri.get('tarih'), veri.get('ders_no'), veri.get('salon'))
+        yol = os.path.join(self.yok_dir(), 'elle-' + ad)
+        try:
+            with open(yol + '.yeni', 'w', encoding='utf-8') as f: json.dump(veri, f, ensure_ascii=False)
+            os.replace(yol + '.yeni', yol)
+        except OSError as e: print('elle yoklama:', e); return
+        self.elle_kayitlar()[ad] = veri
+        self.run_havuz('--yoklama-yaz', yol)
     def run_command(self, c):
-        if c.get('komut') == 'guncelle':   # Ayarlar'daki "Güncellemeyi denetle" ile aynı istek
+        if c.get('komut') == 'yoklama' and isinstance(c.get('yoklama'), dict):   # K-457: Okul Panelinden girilen yoklama → Drive (Öğretmenler odası tahtası yazar)
+            if self.board_info().get('sinif') in CLASS_PLACES:
+                v_ = dict(c['yoklama']); v_.setdefault('kaynak', 'panel')
+                if v_.get('tarih') and v_.get('salon') and v_.get('ders') and isinstance(v_.get('gelmedi'), list): self.elle_yoklama_yaz(v_)
+        elif c.get('komut') == 'guncelle':   # Ayarlar'daki "Güncellemeyi denetle" ile aynı istek
             try:
                 with open(UPDATE_REQUEST, 'w') as f: f.write(str(time.time()))
             except OSError: pass
@@ -8619,6 +8652,9 @@ class KarargahScreen(QWidget):
         self.b_deneme.setStyleSheet('QPushButton{background:#3a1f12;color:#ffd9b8;border:1px solid #f06d0c;border-radius:12px;padding:0 24px;font-size:19px;font-weight:600;}')
         self.b_hide = btn('Gizle', self.main.close_karargah)
         self.b_back = btn('‹  Bütün salonlar', self.back, True); self.b_back.hide()
+        self.elle = None   # K-457: elle yoklama (gelmeyen sıra numaraları)
+        self.b_elle = btn('✎  Yoklama gir', self.elle_ac); self.b_elle.hide()
+        self.b_elle_ok = btn('Yoklamayı onayla ve kaydet', self.elle_kaydet, True); self.b_elle_ok.hide()
         self.note_bar = QFrame(self); self.note_bar.hide(); self.note_bar.setStyleSheet('QFrame{background:#ffb020;border-radius:14px;}')
         nl = QHBoxLayout(self.note_bar); nl.setContentsMargins(20, 10, 10, 10); nl.setSpacing(14)
         self.note_lbl = QLabel(self.note_bar); self.note_lbl.setWordWrap(True); self.note_lbl.setStyleSheet('QLabel{color:#1a1206;font-size:22px;font-weight:700;background:transparent;}')
@@ -8642,7 +8678,39 @@ class KarargahScreen(QWidget):
         self.b_ara.adjustSize(); self.b_ara.move((W - self.b_ara.width())//2, 12); self.b_ara.raise_()   # en üstte, ortada
         self.b_back.setVisible(self.detail is not None); self.b_back.adjustSize(); self.b_back.move(40, y)
         self.b_hide.adjustSize(); self.b_hide.move(W - self.b_hide.width() - 40, y)
-    def back(self): self.detail = None; self.relayout(); self.update()
+        bas_ = False
+        try:
+            if self.ex is not None:
+                now_ = self.main.exam_clock(); bas_ = now_.hour*3600 + now_.minute*60 + now_.second >= self.ex[3]
+        except Exception: bas_ = False
+        gor_ = self.detail is not None and bas_ and bool(self.ex and seat_layout(dict(tur='salon', sinif=self.detail, liste=self.ex[0].get('salonlar', {}).get(self.detail, []))))
+        if not gor_: self.elle = None
+        self.b_elle.setVisible(gor_); self.b_elle.setText('Vazgeç' if self.elle is not None else '✎  Yoklama gir'); self.b_elle.adjustSize()
+        self.b_elle.move(self.b_back.x() + self.b_back.width() + 16, y)
+        self.b_elle_ok.setVisible(gor_ and self.elle is not None)
+        if self.elle is not None: self.b_elle_ok.setText('Yoklamayı onayla ve kaydet  ·  Gelmeyen %d' % len(self.elle))
+        self.b_elle_ok.adjustSize(); self.b_elle_ok.move(self.b_elle.x() + self.b_elle.width() + 16, y)
+    def back(self): self.detail = None; self.elle = None; self.relayout(); self.update()
+    def elle_ac(self):
+        """K-457: tahtası bozuk / yoklama gelmeyen salon: Öğretmenler odasından gelmeyenler dokunarak işaretlenir."""
+        if self.elle is not None: self.elle = None
+        else:
+            y_ = self.info()[5].get(self.detail) or {}
+            self.elle = {int(r['sira']) for r in y_.get('gelmedi', []) if str(r.get('sira', '')).isdigit() or isinstance(r.get('sira'), int)}
+        self.relayout(); self.update()
+    def elle_kaydet(self):
+        if self.elle is None or not self.ex or self.detail is None: return
+        sal = self.detail; n_ = len(self.elle)
+        if QMessageBox.question(self, 'Yoklama', '%s salonu: %s. Yoklama onaylanıp kaydedilsin mi?' % (sal, ('%d öğrenci gelmedi' % n_) if n_ else 'herkes geldi')) != QMessageBox.Yes: return
+        pl, day, lesson, a, b = self.ex; lst = pl.get('salonlar', {}).get(sal, []); old = self.info()[5].get(sal) or {}
+        gel = [dict(r, ders_adi=tr_title(r.get('ders')) or exam_course(day.isoformat(), lesson, r.get('sinif'), pl.get('sinav', ''))) for r in sorted(lst, key=lambda r: r['sira']) if int(r['sira']) in self.elle]
+        try: no_ = str(int(str(lesson).split('.')[0]))
+        except ValueError: no_ = str(lesson).split('.')[0].strip()
+        veri = dict(tarih=day.isoformat(), ders=lesson, ders_no=no_, salon=sal, sinav=pl.get('sinav', ''), ogrenci=len(lst),
+                    gozetmen=old.get('gozetmen') or ([pl['gozcu'][sal]] if (pl.get('gozcu') or {}).get(sal) else []), onay=True, kapandi=True, zaman=time.time(),
+                    mesajlar=old.get('mesajlar', []), kaynak='panel', giren='Öğretmenler odası tahtası', gelmedi=gel)
+        self.main.elle_yoklama_yaz(veri); self.elle = None; self.relayout(); self.update()
+        self.main.show_toast('%s yoklaması kaydedildi · Gelmeyen %d' % (sal, n_))
     def read_ids(self):
         try:
             with open(os.path.join(self.main.yok_dir(), 'mesaj-okundu.json'), encoding='utf-8') as f: return set(json.load(f))
@@ -8682,6 +8750,11 @@ class KarargahScreen(QWidget):
         now = self.main.exam_clock(); t = now.hour*3600 + now.minute*60 + now.second
         return pl, day, lesson, a, b, {s_: data.get('%s_%s.json' % (key, s_)) for s_ in pl.get('salonlar', {})}, t
     def mousePressEvent(self, e):
+        if self.detail is not None and self.elle is not None:   # K-457: dokunulan sıra gelmedi / geldi
+            no_ = next((n_ for n_, r in self.seat_rects.items() if r.contains(QPointF(e.pos()))), None)
+            if no_ is not None:
+                n_ = int(no_); self.elle.symmetric_difference_update({n_}); self.relayout(); self.update()
+            e.accept(); return
         if self.detail is None:
             hit = next((s_ for s_, r in self.tiles.items() if r.contains(QPointF(e.pos()))), None)
             if hit:
@@ -8720,10 +8793,10 @@ class KarargahScreen(QWidget):
         if self.detail is not None:
             lst = pl['salonlar'].get(self.detail, []); y_ = ys.get(self.detail) or {}
             msgs_ = y_.get('mesajlar', [])
-            self.absent = {int(r['sira']) for r in y_.get('gelmedi', [])}
+            self.absent = {int(r['sira']) for r in y_.get('gelmedi', [])} if self.elle is None else set(self.elle)
             plan = dict(tur='salon', sinif=self.detail, liste=lst)
             if seat_layout(plan):
-                head = '%s  ·  Gelmeyen: %d  ·  %s' % (lesson, len(self.absent), ('Kalan %s' % ms(max(0, b - t))) if a <= t < b else ('Başlamasına %s' % ms(a - t) if t < a else 'Sınav bitti'))
+                head = ('✎ Gelmeyenlere dokunun  ·  ' if self.elle is not None else '') + '%s  ·  Gelmeyen: %d  ·  %s' % (lesson, len(self.absent), ('Kalan %s' % ms(max(0, b - t))) if a <= t < b else ('Başlamasına %s' % ms(a - t) if t < a else 'Sınav bitti'))
                 _draw_seatmap(self, p, W, H - 60*k, k, font, plan, '#5cc8ff', '#5cc8ff', head)
                 if msgs_:   # bu salonun mesajları, altta
                     mt = '   ·   '.join('%s  %s' % (time.strftime('%H.%M', time.localtime(m_.get('zaman', 0))), m_.get('metin', '')) for m_ in msgs_[-3:])

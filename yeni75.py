@@ -1167,6 +1167,27 @@ class DailyDialog(QDialog):
 
 def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 
+SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
+_SK_IS = [None]
+def sistem_klavyesini_gizle():
+    """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
+    yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
+    import subprocess, threading
+    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1' or not shutil.which('xdotool'): return
+    if _SK_IS[0] is not None and _SK_IS[0].is_alive(): return
+    def calis():
+        ids = set()
+        for kip in ('--classname', '--class', '--name'):
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
+        ben = os.getpid()
+        for i in ids:
+            try:
+                if int(subprocess.run(['xdotool', 'getwindowpid', i], capture_output=True, text=True, timeout=2).stdout.strip() or 0) == ben: continue
+                subprocess.run(['xdotool', 'windowunmap', i], capture_output=True, timeout=2); print('sistem klavyesi gizlendi', i)
+            except Exception: pass
+    _SK_IS[0] = threading.Thread(target=calis, daemon=True); _SK_IS[0].start()
+
 class TouchKeyboard(QWidget):
     """Uygulamanın kendi Türkçe Q klavyesi (dokunmatik tahtada sistem klavyesi açılmayabiliyor).
     K-354: "∑ 123" ile matematik düzeni: = + − × ÷ ^ ² ³ √ π ≤ ≥ ≠ ° sin cos tan log ln…"""
@@ -1202,6 +1223,15 @@ class TouchKeyboard(QWidget):
                     else:   # matematikte tuşlar eşit genişlikte; uzun adlar (sin, log, Tamam) küçük yazı
                         b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
                         if len(k) > 1 and k not in ('⌫',) and not buyuk: b.setStyleSheet(b.styleSheet().replace('font-size:22px', 'font-size:17px').replace('font-size:20px', 'font-size:17px'))
+    def showEvent(self, e):   # K-454: bizim klavye açıkken sistem klavyesi görünmesin
+        super().showEvent(e); sistem_klavyesini_gizle()
+        t_ = getattr(self, '_sk_t', None)
+        if t_ is None: t_ = self._sk_t = QTimer(self); t_.setInterval(700); t_.timeout.connect(sistem_klavyesini_gizle)
+        t_.start()
+    def hideEvent(self, e):
+        t_ = getattr(self, '_sk_t', None)
+        if t_ is not None: t_.stop()
+        super().hideEvent(e)
     def tus_boyu(self, H):
         """K-365: tuş yüksekliği verilen alana göre (klavye ekrandan taşmasın, tuşlar üst üste binmesin)."""
         import re as _re
@@ -5391,7 +5421,14 @@ class Window(QMainWindow):
         es = getattr(self, 'exam_screen', None)
         if es is not None and es.st and es.st.get('phase') != 'preview': self.welcome_key = key; return
         if not self.isMinimized() and time.time() - getattr(self, 'last_touch', 0) < 120: return   # ders sürüyor: 20 sn sonra yine bakılır
+        pasif = getattr(self, '_pasif_t', None)
+        if pasif is not None and pasif >= time.time() - (t - cur[1]) - 5:   # K-453: bu ders başka bir program (tarayıcı vb.) açıldı: Atlas öne gelmez
+            self.welcome_key = key; return
         self.welcome_key = key; self.show_welcome()
+    def uygulama_durumu(self, st):
+        """K-453: Atlas arka plana geçtiği an (başka program öne geldi ya da küçültüldü) kaydedilir; öne gelince silinir."""
+        if st == Qt.ApplicationActive: self._pasif_t = None
+        elif getattr(self, '_pasif_t', None) is None: self._pasif_t = time.time()
     def kelebek_tick(self):
         """Oturma planı: okul günü 07.00–15.00 arası 2 dakikada bir arka planda indirilir; gün geçince silinir."""
         if kalem_mesgul(self): QTimer.singleShot(1200, self.kelebek_tick); return   # K-429: yazarken arka plan işi beklesin
@@ -16631,6 +16668,7 @@ def main():
         QMessageBox.information(None,PRODUCT,'Uygulama zaten açık. Görev çubuğundaki pencereye dönün; serbest kalem için Ekrana yaz düğmesini kullanın.');return
     app.umal_lock = lock   # yeniden başlatmada bırakılır
     window = Window(); window.show()
+    app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

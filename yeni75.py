@@ -8973,13 +8973,17 @@ class OgrenciAraDialog(QDialog):
             def toplam():
                 K.setMinimumHeight(K.heightForWidth(K.width()) if K.isVisible() else 0); K.updateGeometry(); lay.invalidate(); lay.activate()
                 return lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
-            K.ust = None
+            K.ust = None; self.res.show()
             if kb is not None: kb.tus_boyu(56)
             fazla = toplam() - enfazla
             if fazla > 0 and K.isVisible():
                 kh = K.heightForWidth(K.width()); K.ust = max(230, kh - fazla); fazla = toplam() - enfazla
             if fazla > 0 and kb is not None and kb.isVisible():
                 kb.tus_boyu(max(40, 56 - int(math.ceil(fazla/5.0)))); fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible() and self.res.isVisible() and self.res.text():   # küçük ekran: diğer sınavlar gizlenir
+                self.res.hide(); fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible():
+                K.ust = max(150, (K.ust or K.heightForWidth(K.width())) - fazla); fazla = toplam() - enfazla
             h = min(enfazla, toplam())
             self.setMinimumHeight(0); self.resize(self.width(), h)
             y = max(scr.top() + 6, min(self.y(), scr.bottom() - pay - h))

@@ -14015,8 +14015,8 @@ class PanelClock(QWidget):
             p.save(); p.translate(x0 + 50*u, y0 + 50*u); p.rotate(aci); p.scale(u, u)
             q = QColor('#22e8ff'); q.setAlpha(70); p.setPen(QPen(q, 1.6)); p.setBrush(Qt.NoBrush); p.drawPolygon(_Pg([QPointF(a, b) for a, b in pts]))   # hafif ışıma
             p.setPen(QPen(QColor('#0d1726'), kenar)); p.setBrush(QColor(renk)); p.drawPolygon(_Pg([QPointF(a, b) for a, b in pts])); p.restore()
-        ibre((h_ % 12)*30 + m_*.5, ((0, 5.5), (-1.9, 0), (0, -22.5), (1.9, 0)), '#ffffff', .5)      # akrep (yaprak)
-        ibre(m_*6 + s_*.1, ((0, 6.5), (-1.3, 0), (0, -35.5), (1.3, 0)), '#c9f8ff', .45)             # yelkovan
+        ibre((h_ % 12)*30 + m_*.5, ((0, 6), (-2.5, 0), (0, -23), (2.5, 0)), '#ffffff', .5)      # akrep (yaprak)
+        ibre(m_*6 + s_*.1, ((0, 7), (-1.9, 0), (0, -36), (1.9, 0)), '#dffbff', .45)             # yelkovan
         p.save(); p.translate(x0 + 50*u, y0 + 50*u); p.rotate(s_*6); p.scale(u, u)                   # saniye: turuncu
         q = QColor('#ff9a3a'); q.setAlpha(80); p.setPen(QPen(q, 3.0, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, 8), QPointF(0, -40))
         p.setPen(QPen(QColor('#ff9a3a'), 1.3, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, 8), QPointF(0, -40))

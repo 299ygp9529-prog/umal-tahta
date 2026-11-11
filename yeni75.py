@@ -9218,7 +9218,7 @@ class YerimDialog(QDialog):
         super().__init__(main); self.plan = plan; self.ders = ders; self.day = day; self.sira = sira; self.seat_rects = {}; self.absent = set()
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
         g = main.geometry(); self.setGeometry(g)
-        self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(self.update); self.t.start()
+        self.nabiz = None; self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(lambda: self.update(self.nabiz) if self.nabiz is not None else self.update()); self.t.start()
         QTimer.singleShot(30000, self.accept)
     def paintEvent(self, e):
         from PyQt5.QtGui import QPainter, QFont, QPen
@@ -9226,8 +9226,19 @@ class YerimDialog(QDialog):
         W, H = self.width(), self.height(); k = min(W/1600, H/900)
         fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
         def font(px, b=False): f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setWeight(QFont.Bold if b else QFont.Medium); return f
-        try: _draw_seatmap(self, p, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
-        except Exception as ex: print('yerim:', ex)
+        # K-449: salon (fotoğraflar, yazılar) bir kez çizilip saklanır; saniyede 20 kez baştan çizmek yavaş tahtada ekranı donduruyordu.
+        on = getattr(self, '_on', None)
+        if on is None or on[0] != (W, H):
+            pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
+            try: _draw_seatmap(self, q, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
+            except Exception as ex: print('yerim:', ex)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); bar_ = QRectF(0, H - 60*k, W, 60*k); q.drawRect(bar_)
+            q.setFont(font(26, True)); q.setPen(QColor('#7ff6ff'))
+            q.drawText(bar_, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
+            q.end(); on = self._on = ((W, H), pm, dict(self.seat_rects))
+            c0 = on[2].get(self.sira)
+            if c0 is not None: self.nabiz = c0.adjusted(-48*k, -48*k, 48*k, 48*k).toAlignedRect()   # sonraki çizimler yalnız bu bölge
+        p.drawPixmap(e.rect(), on[1], e.rect()); self.seat_rects = on[2]
         c = self.seat_rects.get(self.sira)
         if c is not None:   # neon nabız: parlayan çerçeve büyüyüp küçülür
             a = .5 + .5*math.sin(time.time()*6.0); gl = QColor('#22e8ff')
@@ -9236,9 +9247,6 @@ class YerimDialog(QDialog):
                 gl.setAlpha(int(al*(.45 + .55*a))); p.setPen(QPen(gl, w_*k)); p.setBrush(Qt.NoBrush)
                 p.drawRoundedRect(c.adjusted(-(3 + 4*a)*k, -(3 + 4*a)*k, (3 + 4*a)*k, (3 + 4*a)*k), 12*k, 12*k)
             p.setPen(QPen(QColor('#e9fdff'), 3*k)); p.drawRoundedRect(c.adjusted(-2*k, -2*k, 2*k, 2*k), 11*k, 11*k)
-        p.setPen(Qt.NoPen); p.setBrush(QColor(10, 18, 30, 235)); bar = QRectF(0, H - 60*k, W, 60*k); p.drawRect(bar)
-        p.setFont(font(26, True)); p.setPen(QColor('#7ff6ff'))
-        p.drawText(bar, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
         p.end()
     def mousePressEvent(self, e): self.accept()
 

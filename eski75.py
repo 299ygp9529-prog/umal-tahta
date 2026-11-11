@@ -1205,7 +1205,7 @@ class TouchKeyboard(QWidget):
     def tus_boyu(self, H):
         """K-365: tuş yüksekliği verilen alana göre (klavye ekrandan taşmasın, tuşlar üst üste binmesin)."""
         import re as _re
-        H = int(max(40, H))
+        H = int(max(40, H)); self._H = H
         for kutu in (self.harf, self.mat):
             for b in kutu.findChildren(QPushButton):
                 b.setFixedHeight(H); b.setStyleSheet(_re.sub(r'(min|max)-height:\d+px', lambda m_: '%s-height:%dpx' % (m_.group(1), H), b.styleSheet()))
@@ -1216,7 +1216,7 @@ class TouchKeyboard(QWidget):
         self.shift = on
         for k, b in self.keys:
             if len(k) == 1 and k.isalpha(): b.setText(self.upper(k) if on else k)
-            if k == '⇧' and not self.buyuk: b.setStyleSheet('QPushButton{font-size:22px;padding:0;min-height:56px;max-height:56px;%s}' % ('background:#2f6fd6;color:white;' if on else ''))
+            if k == '⇧' and not self.buyuk: H_ = getattr(self, '_H', 56); b.setStyleSheet('QPushButton{font-size:22px;padding:0;min-height:%dpx;max-height:%dpx;%s}' % (H_, H_, 'background:#2f6fd6;color:white;' if on else ''))
             if k == '⇧' and self.buyuk: b.setText('⇧' if not on else '⬆')
     @staticmethod
     def upper(k): return {'i': 'İ', 'ı': 'I'}.get(k, k.upper())
@@ -8961,7 +8961,36 @@ class OgrenciAraDialog(QDialog):
         self.idle = QTimer(self); self.idle.setSingleShot(True); self.idle.timeout.connect(self.reject); self.idle.start(60000)
         QTimer.singleShot(0, self.edit.setFocus)
     def poke(self, *a): self.idle.start(60000)
+    def showEvent(self, e):
+        super().showEvent(e); QTimer.singleShot(0, self.sigdir)
+    def sigdir(self):
+        """K-446: bilet çıkınca pencere ekrandan taşmasın: önce bilet küçülür, gerekirse tuşlar; pencere ekranın içinde (alt çerçevenin üstünde) durur."""
+        try:
+            scr = (self.screen() if hasattr(self, 'screen') and self.screen() else QApplication.primaryScreen()).availableGeometry()
+            pay = max(40, int(scr.height()*0.06))   # tahtanın alt çerçevesi ekranın kenarını örter
+            enfazla = scr.height() - 12 - pay
+            kb = getattr(self, '_kb', None); lay = self.layout(); K = self.kart
+            def toplam():
+                K.setMinimumHeight(K.heightForWidth(K.width()) if K.isVisible() else 0); K.updateGeometry(); lay.invalidate(); lay.activate()
+                return lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+            K.ust = None; self.res.show()
+            if kb is not None: kb.tus_boyu(56)
+            fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible():
+                kh = K.heightForWidth(K.width()); K.ust = max(230, kh - fazla); fazla = toplam() - enfazla
+            if fazla > 0 and kb is not None and kb.isVisible():
+                kb.tus_boyu(max(40, 56 - int(math.ceil(fazla/5.0)))); fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible() and self.res.isVisible() and self.res.text():   # küçük ekran: diğer sınavlar gizlenir
+                self.res.hide(); fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible():
+                K.ust = max(150, (K.ust or K.heightForWidth(K.width())) - fazla); fazla = toplam() - enfazla
+            h = min(enfazla, toplam())
+            self.setMinimumHeight(0); self.resize(self.width(), h)
+            y = max(scr.top() + 6, min(self.y(), scr.bottom() - pay - h))
+            if y != self.y(): self.move(self.x(), y)
+        except Exception as x: print('ara sığdır:', x)
     def search(self, q):
+        QTimer.singleShot(0, self.sigdir)
         try: rs = self.main.ogrenci_ara(q)
         except Exception as e: rs = []; print('ara:', e)
         self.yer.hide(); self.yer_bilgi = None; self.kart.gizle(); self.res.setMinimumHeight(330)
@@ -9026,12 +9055,16 @@ class BiletKart(QWidget):
         self.d = d; self.show(); self.tm.start(); self.updateGeometry(); self.update()
     def gizle(self):
         self.d = None; self.tm.stop(); self.hide()
+    ust = None   # K-446: ekrana sığsın diye en çok bu yükseklik (bilet orantılı küçülür)
     def resizeEvent(self, e):
         h_ = int(min(self.width(), 1000)*self.BH/self.BW) + 24
+        if self.ust: h_ = min(h_, self.ust)
         if self.minimumHeight() != h_: self.setMinimumHeight(h_)
         super().resizeEvent(e)
     def hasHeightForWidth(self): return True
-    def heightForWidth(self, w): return int(w*self.BH/self.BW) + 24
+    def heightForWidth(self, w):
+        h_ = int(min(w, 1000)*self.BH/self.BW) + 24
+        return min(h_, self.ust) if self.ust else h_
     def sizeHint(self):
         from PyQt5.QtCore import QSize
         return QSize(1100, self.heightForWidth(1100))
@@ -11280,6 +11313,13 @@ def proje_suresi_doldu(d):
     import datetime
     sg = str((d or {}).get('son_gun') or '')
     return bool(sg) and datetime.date.today().isoformat() > sg
+def proje_gerek(d):
+    """K-432: tercih sayısı her zaman 3 (sınıfta 3'ten az proje dersi varsa o kadar); eksik tercih kabul edilmez."""
+    k_ = (d or {}).get('kont') or {}; n = sum(1 for v in k_.values() if int(v or 0) > 0)
+    return max(1, min(3, n or 3))
+def proje_tamam(d, no):
+    t = ((d or {}).get('tercihler') or {}).get(no)
+    return isinstance(t, list) and len(t) >= proje_gerek(d)
 def proje_dagit(tercihler, kont, seed=None):
     """tercihler {no: [1., 2., 3. ders]}, kont {ders: en çok kişi}. Önce 1. tercihler; bir derse kontenjandan çok
     öğrenci isterse kura (tamamen şans) çekilir, açıkta kalanlar 2. sonra 3. tercihlerine geçer. Döner {no: ders}."""
@@ -11333,7 +11373,7 @@ def proje_report(sinif, roster, d, folder, font_dir):
     bx = W - M - 92; pg.draw_rect(fitz.Rect(bx, 22, W - M, 70), color=(0.13, 0.91, 1.0), fill=None, width=1.6, radius=0.2)
     T(bx + 46, 54, sinif, 22, 'b', (1, 1, 1), center=True)
     # özet satırı
-    n = len(roster); yer = sum(1 for no in ad if no in sonuc); tk = sum(1 for no in ad if no in ter)
+    n = len(roster); yer = sum(1 for no in ad if no in sonuc); tk = sum(1 for no in ad if proje_tamam(d, no))
     y = 118
     chips = [('Sınıf mevcudu', n), ('Tercih yapan', tk), ('Yerleşen', yer), ('Yerleşmeyen', n - yer)]
     cw = (W - 2*M - 3*10)/4
@@ -11485,9 +11525,7 @@ class ProjeOgretmen(QDialog):
         alt = QLabel('Bu sınıfın ayarları; diğer sınıflar kendi ayarlarıyla çalışır.'); alt.setStyleSheet('color:#9fb3cc;font-size:17px;'); v.addWidget(alt)
         # sınıfa özel: tercih sayısı ve son gün
         ay = QHBoxLayout(); ay.setSpacing(8)
-        ay.addWidget(QLabel('Kaç tercih:')); self.adet_b = {}
-        for n_ in (1, 2, 3):
-            b_ = QPushButton(str(n_)); b_.setFixedSize(56, 46); b_.setFocusPolicy(Qt.NoFocus); b_.clicked.connect(lambda c=False, n__=n_: self.adet(n__)); ay.addWidget(b_); self.adet_b[n_] = b_
+        self.adet_b = {}; ay.addWidget(QLabel('Her öğrenci 3 tercih yapar'))   # K-432: tercih sayısı seçilmez
         ay.addSpacing(30); ay.addWidget(QLabel('Son gün:'))
         sg_y = QPushButton('Yok'); sg_y.setFocusPolicy(Qt.NoFocus); sg_y.clicked.connect(lambda: self.son_gun(None)); ay.addWidget(sg_y); self.sg_yok = sg_y
         sg_m = QPushButton('−'); sg_m.setFixedSize(52, 46); sg_m.setFocusPolicy(Qt.NoFocus); sg_m.clicked.connect(lambda: self.son_gun(-1)); ay.addWidget(sg_m)
@@ -11576,7 +11614,7 @@ class ProjeOgretmen(QDialog):
     def dagit(self):
         if self.d.get('durum') == 'dagitildi' and QMessageBox.question(self, 'Proje seçimi', 'Kura yeniden çekilsin mi? Elle yapılan düzeltmeler silinir.') != QMessageBox.Yes: return
         import datetime
-        self.d['sonuc'] = proje_dagit(self.d.get('tercihler', {}), self.d.get('kont', {})); self.d['durum'] = 'dagitildi'
+        self.d['sonuc'] = proje_dagit({no: t for no, t in self.d.get('tercihler', {}).items() if proje_tamam(self.d, no)}, self.d.get('kont', {}))   # K-432: yalnız 3 tercihini tamamlayanlar; self.d['durum'] = 'dagitildi'
         self.d['kura_zaman'] = datetime.datetime.now().strftime('%d.%m.%Y %H.%M'); self.save(); self.main.proje_refresh()
     def duzelt(self):
         """Sonucu düzelt: tam ekran liste; her öğrencinin satırına dokununca dersler büyük düğmelerle çıkar (açılır liste yok)."""
@@ -11693,7 +11731,7 @@ class ProjeScreen(QWidget):
             self.main.show_toast('Seçim şu an kapalı.' if d.get('durum') != 'dagitildi' else 'Dağıtım yapıldı; değişiklik için öğretmenine söyle.'); return
         ders = [x for x in proje_dersleri(self.main.proje_sinif()) if int(d.get('kont', {}).get(x) or 0) > 0]
         if not ders: self.main.show_toast('Öğretmen henüz kontenjan belirlemedi.'); return
-        ProjeForm(self.main, no, ad, ders, d.get('kont', {}), d.get('tercihler', {}).get(no), lambda t: self.main.proje_tercih(no, t), adet=int(d.get('tercih_sayisi') or 3)).exec_(); self.update()
+        ProjeForm(self.main, no, ad, ders, d.get('kont', {}), d.get('tercihler', {}).get(no), lambda t: self.main.proje_tercih(no, t), adet=proje_gerek(d)).exec_(); self.update()
     def paintEvent(self, e):
         from PyQt5.QtGui import QFont
         fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
@@ -11710,7 +11748,7 @@ def draw_proje_list(p, W, H, k, font, sinif, ros, d, bottom):
     fT = font(40, True); tw = QFontMetrics(fT).horizontalAdvance(sinif); pill = QRectF(30*k, 18*k, tw + 48*k, 62*k)
     draw_neon(p, pill, sinif, fT, '#22e8ff', k)
     dur = d.get('durum', 'kapali'); ter = d.get('tercihler', {}); sonuc = d.get('sonuc', {})
-    meta = {'kapali': 'Seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if no in ter), len(ros)), 'dagitildi': 'Dağıtım yapıldı · %d/%d yerleşti' % (sum(1 for no, _ in ros if no in sonuc), len(ros))}.get(dur, '')
+    meta = {'kapali': 'Seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if proje_tamam(d, no)), len(ros)), 'dagitildi': 'Dağıtım yapıldı · %d/%d yerleşti' % (sum(1 for no, _ in ros if no in sonuc), len(ros))}.get(dur, '')
     if dur == 'acik' and d.get('son_gun'): meta += (' · süre doldu' if proje_suresi_doldu(d) else ' · son gün ' + proje_gun_yazisi(d['son_gun']))
     fm = font(22, True); mw = QFontMetrics(fm).horizontalAdvance(meta)
     text(QRectF(W - 30*k - mw - 4, 18*k, mw + 4, 62*k), meta, fm, '#ffe14d', Qt.AlignRight | Qt.AlignVCenter)
@@ -11726,7 +11764,7 @@ def draw_proje_list(p, W, H, k, font, sinif, ros, d, bottom):
     rects = {}; fN = font(15, True); fS = font(13, True)
     for i, (no, ad) in enumerate(ros):
         r = QRectF(30*k + (i % cols)*(cw + gap), top + (i//cols)*(ch + gap), cw, ch)
-        dn = (no in sonuc) if dur == 'dagitildi' else (no in ter)
+        dn = (no in sonuc) if dur == 'dagitildi' else proje_tamam(d, no)
         p.setPen(QPen(QColor('#2fbf71'), 3*k) if dn else Qt.NoPen); p.setBrush(QColor(255, 255, 255, 16)); p.drawRoundedRect(r, 12*k, 12*k)
         lines = 2 if dur == 'dagitildi' else 1
         ph_h = r.height() - (22 + 24*lines)*k; ph_w = min(r.width() - 14*k, ph_h*0.78)   # vesikalık oranı korunur (yüz kesilmez)
@@ -13499,7 +13537,7 @@ class RehberlikMenu(QDialog):
         try: rh = (not room) and bool(main.anket_active('rehberlik'))
         except Exception: rh = False
         d = main.proje_data(); ros = main.proje_roster(); ter = d.get('tercihler', {})
-        dur = {'kapali': 'seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if no in ter), len(ros)), 'dagitildi': 'dağıtım yapıldı'}.get(d.get('durum', 'kapali'), '')
+        dur = {'kapali': 'seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if proje_tamam(d, no)), len(ros)), 'dagitildi': 'dağıtım yapıldı'}.get(d.get('durum', 'kapali'), '')
         if d.get('son_gun') and d.get('durum') == 'acik': dur += ' · son gün ' + proje_gun_yazisi(d['son_gun'])
         h = QHBoxLayout(); h.setSpacing(16)
         b1 = QPushButton('  Proje ödevi tercihi\n  ' + (dur if ros else 'öğrenci listesi bekleniyor') + ('  (tanıtım)' if main.proje_demo() else ''))
@@ -16454,7 +16492,12 @@ def install_turkish(app):
 def main():
     # K-353: Atlas'taki her yazı alanının kendi Türkçe klavyesi var; Pardus'un ekran klavyesi de açılınca iki klavye çıkıyordu.
     # Sistem klavyesi yazı alanını erişilebilirlik (AT-SPI) üzerinden fark eder: Atlas için kapatılır. (UMAL_SISTEM_KLAVYE=1: açık kalsın)
-    if os.environ.get('UMAL_SISTEM_KLAVYE') != '1': os.environ['QT_ACCESSIBILITY'] = '0'
+    if os.environ.get('UMAL_SISTEM_KLAVYE') != '1':
+        os.environ['QT_ACCESSIBILITY'] = '0'
+        # K-447: Qt 5 QT_ACCESSIBILITY'ye bakmıyor; Pardus ekran klavyesi yine açılıyordu. Erişilebilirlik yolu boş bir adrese yönlendirilir:
+        # Atlas'ın yazı alanları sistem klavyesine hiç görünmez, yalnız Atlas'ın kendi klavyesi açılır.
+        os.environ['AT_SPI_BUS_ADDRESS'] = 'unix:path=/nonexistent/umal-atspi-kapali'; os.environ['NO_AT_BRIDGE'] = '1'
+        os.environ.pop('QT_LINUX_ACCESSIBILITY_ALWAYS_ON', None)
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     # Keep every pen/touch sample (Qt merges fast moves by default, which
     # turns curves into visible corners on interactive boards).

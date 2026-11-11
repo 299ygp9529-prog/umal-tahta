@@ -28,7 +28,7 @@ def bitir():
     print(etiket, 'ekran', scr.width(), scr.height(), 'pencere', g.x(), g.y(), g.width(), g.height(), 'klavye_alt', alt, 'bilet_h', d.kart.height(), 'tus', getattr(kb, '_H', 56),
           'SIGIYOR' if alt <= scr.bottom() - 30 and g.y() >= scr.top() else 'TASIYOR')
     subprocess.run(['import', '-window', 'root', '/tmp/onizleme/klavye-%s.png' % etiket]); 
-    if kip: e_ = dict(os.environ); e_.pop('AT_SPI_BUS_ADDRESS', None); e_.pop('NO_AT_BRIDGE', None); subprocess.run(['python3', '/tmp/atspi_bak.py', kip], env=e_)
+    if kip: e_ = dict(os.environ); e_.pop('AT_SPI_BUS_ADDRESS', None); e_.pop('NO_AT_BRIDGE', None); subprocess.Popen(['python3', '/tmp/atspi_bak.py', kip], env=e_); QTimer.singleShot(8000, app.quit); return
     app.quit()
 d.show(); QTimer.singleShot(1200, lambda: d.edit.setText('4')); QTimer.singleShot(5000 if kip else 3500, bitir)
 app.exec_()

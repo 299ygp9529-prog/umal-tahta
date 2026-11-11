@@ -3,6 +3,7 @@ sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
 kip = sys.argv[2] if len(sys.argv) > 2 else ''
 if kip != 'kontrol': os.environ['QT_ACCESSIBILITY'] = '0'
+if kip: os.environ['QT_LINUX_ACCESSIBILITY_ALWAYS_ON'] = '1'
 if kip == 'yeni':
     os.environ['AT_SPI_BUS_ADDRESS'] = 'unix:path=/nonexistent/umal-atspi-kapali'; os.environ['NO_AT_BRIDGE'] = '1'
 from PyQt5.QtWidgets import QApplication, QWidget

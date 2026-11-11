@@ -37,59 +37,16 @@ jobs:
           PY
           grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
           mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
-      - name: Ekran ve tahta
+      - name: Klavye sığma
         run: |
-          # Şifre burada üretilir; yalnız Claude'un açık anahtarıyla şifrelenmiş hâli durum dalına yazılır.
-          VNC_SIFRE=$(tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' < /dev/urandom | head -c 8); echo "::add-mask::$VNC_SIFRE"
-          printf %s "$VNC_SIFRE" | openssl pkeyutl -encrypt -pubin -inkey sanal-acik.pem | base64 -w0 > /tmp/sifre.enc
-          export DISPLAY=:1 LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
-          setsid nohup Xvfb :1 -screen 0 1920x1080x24 -nolisten tcp >/tmp/xvfb.log 2>&1 & sleep 2
-          setsid nohup openbox >/tmp/openbox.log 2>&1 & sleep 1
-          x11vnc -storepasswd "$VNC_SIFRE" /tmp/vncpass >/dev/null
-          x11vnc -display :1 -rfbauth /tmp/vncpass -forever -shared -rfbport 5900 -bg -quiet -o /tmp/x11vnc.log
-          setsid nohup websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/ws.log 2>&1 &
-          ls -la /usr/share/tahta-kalem/__pycache__ || echo "DERLENMIS-YOK"
-          setsid nohup umal-tahta > /tmp/tahta.log 2>&1 & sleep 25
-          import -window root /tmp/ilk.png || true
-          tail -20 /tmp/tahta.log || true
-      - name: Ölçüm (disk 2 sn gecikirken ekran bloklanması)
-        run: |
-          export DISPLAY=:1 LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
-          pkill -f tahta_kalem.py || true; sleep 2
-          acilis() { # etiket komut...
-            et="$1"; shift; rm -rf /tmp/acilis-veri; mkdir -p /tmp/acilis-veri/umal-tahta; echo '{"sinif": "9-A"}' > /tmp/acilis-veri/umal-tahta/tahta.json
-            s=$(date +%s%N); XDG_DATA_HOME=/tmp/acilis-veri setsid nohup "$@" > /tmp/acilis.log 2>&1 &
-            for i in $(seq 1 600); do xdotool search --onlyvisible --class tahta_kalem >/dev/null 2>&1 && break; sleep 0.05; done
-            e=$(date +%s%N); id=$(xdotool search --onlyvisible --class tahta_kalem | head -1)
-            echo "ACILIS $et $(( (e - s) / 1000000 )) ms · $(xprop -id $id WM_CLASS 2>/dev/null) · $(pgrep -f /usr/share/tahta-kalem/tahta_kalem.py | wc -l) süreç" >> /tmp/olcum.txt
-            pkill -f tahta_kalem.py || true; sleep 2
-          }
-          for n in 1 2 3; do
-            acilis eski env PYTHONPATH=/usr/lib/umal-tahta/python python3 /usr/share/tahta-kalem/tahta_kalem.py
-            acilis yeni umal-tahta
+          cp aday75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; mkdir -p /tmp/onizleme
+          export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
+          for e in 1920x1080 1366x768 1280x720; do
+            Xvfb :7 -screen 0 ${e}x24 -nolisten tcp >/dev/null 2>&1 & X=$!; sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & O=$!; sleep 1
+            DISPLAY=:7 timeout 60 python3 klavye_t.py $e >> /tmp/olcum.txt 2>&1 || echo "$e hata" >> /tmp/olcum.txt
+            kill $O $X; sleep 1
           done
-          kos() { # modül etiket senaryo N
-            rm -rf /tmp/olcum-veri; mkdir -p /tmp/olcum-veri/umal-tahta; echo '{"sinif": "9-A"}' > /tmp/olcum-veri/umal-tahta/tahta.json
-            XDG_DATA_HOME=/tmp/olcum-veri timeout $((120 + $4 * 14)) python3 olcum.py "$1" "$2" "$3" "$4" > /tmp/olcum-son.txt 2>&1 || true
-            grep '^SONUC' /tmp/olcum-son.txt >> /tmp/olcum.txt || { echo "SONUC-YOK $2 $3 $4" >> /tmp/olcum.txt; tail -15 /tmp/olcum-son.txt >> /tmp/olcum-hata.txt; }
-          }
-          kos2() { # modül etiket senaryo
-            rm -rf /tmp/olcum-veri; mkdir -p /tmp/olcum-veri/umal-tahta; echo '{"sinif": "9-A"}' > /tmp/olcum-veri/umal-tahta/tahta.json
-            XDG_DATA_HOME=/tmp/olcum-veri timeout 300 python3 olcum2.py "$1" "$2" "$3" > /tmp/olcum-son.txt 2>&1 || true
-            grep '^SONUC' /tmp/olcum-son.txt >> /tmp/olcum.txt || echo "SONUC-YOK $2 $3" >> /tmp/olcum.txt
-            grep -v '^SONUC' /tmp/olcum-son.txt | tail -12 >> /tmp/olcum-hata.txt || true
-          }
-          YENI=/usr/share/tahta-kalem/tahta_kalem.py; ESKI=$PWD/eski72.py
-          python3 olcum2.py $YENI yeni kitap-uret
-          kos2 $YENI yeni onar
-          kos2 $ESKI eski pdf; kos2 $YENI yeni pdf
-          kos2 $ESKI eski zoom; kos2 $YENI yeni zoom
-          kos $ESKI eski dolu 10; kos $YENI yeni dolu 10
-          kos $YENI yeni kalem 10; kos $YENI yeni sayfa 10; kos $YENI yeni kapanis 1
-          cat /tmp/olcum.txt; cat /tmp/olcum-hata.txt 2>/dev/null || true
-      - name: Önizlemeler
-        run: |
-          mkdir -p /tmp/onizleme; timeout 300 python3 onizleme.py > /tmp/onizleme-log.txt 2>&1 || true; tail -20 /tmp/onizleme-log.txt
+          cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum

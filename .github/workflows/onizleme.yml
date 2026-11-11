@@ -37,13 +37,14 @@ jobs:
           PY
           grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
           mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
-      - name: Panel saati
+      - name: Cizim
         run: |
-          mkdir -p /tmp/onizleme; cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-          apt-get install -y -qq --no-install-recommends fonts-liberation >/dev/null 2>&1 || true
-          export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
-          Xvfb :7 -screen 0 1000x420x24 -nolisten tcp >/dev/null 2>&1 & sleep 2
-          DISPLAY=:7 timeout 60 python3 saat_t.py 2>&1 | grep -v XDG > /tmp/olcum.txt || echo hata >> /tmp/olcum.txt
+          export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python QT_QPA_PLATFORM=offscreen
+          : > /tmp/olcum.txt
+          for surum in eski yeni eski yeni; do
+            cp ${surum}75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
+            timeout 120 python3 cizim_olc.py $surum 2>&1 | grep -v XDG >> /tmp/olcum.txt || echo "$surum hata" >> /tmp/olcum.txt
+          done
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

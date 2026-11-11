@@ -1167,6 +1167,27 @@ class DailyDialog(QDialog):
 
 def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 
+SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
+_SK_IS = [None]
+def sistem_klavyesini_gizle():
+    """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
+    yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
+    import subprocess, threading
+    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1' or not shutil.which('xdotool'): return
+    if _SK_IS[0] is not None and _SK_IS[0].is_alive(): return
+    def calis():
+        ids = set()
+        for kip in ('--classname', '--class', '--name'):
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
+        ben = os.getpid()
+        for i in ids:
+            try:
+                if int(subprocess.run(['xdotool', 'getwindowpid', i], capture_output=True, text=True, timeout=2).stdout.strip() or 0) == ben: continue
+                subprocess.run(['xdotool', 'windowunmap', i], capture_output=True, timeout=2); print('sistem klavyesi gizlendi', i)
+            except Exception: pass
+    _SK_IS[0] = threading.Thread(target=calis, daemon=True); _SK_IS[0].start()
+
 class TouchKeyboard(QWidget):
     """Uygulamanın kendi Türkçe Q klavyesi (dokunmatik tahtada sistem klavyesi açılmayabiliyor).
     K-354: "∑ 123" ile matematik düzeni: = + − × ÷ ^ ² ³ √ π ≤ ≥ ≠ ° sin cos tan log ln…"""
@@ -1202,6 +1223,15 @@ class TouchKeyboard(QWidget):
                     else:   # matematikte tuşlar eşit genişlikte; uzun adlar (sin, log, Tamam) küçük yazı
                         b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
                         if len(k) > 1 and k not in ('⌫',) and not buyuk: b.setStyleSheet(b.styleSheet().replace('font-size:22px', 'font-size:17px').replace('font-size:20px', 'font-size:17px'))
+    def showEvent(self, e):   # K-454: bizim klavye açıkken sistem klavyesi görünmesin
+        super().showEvent(e); sistem_klavyesini_gizle()
+        t_ = getattr(self, '_sk_t', None)
+        if t_ is None: t_ = self._sk_t = QTimer(self); t_.setInterval(700); t_.timeout.connect(sistem_klavyesini_gizle)
+        t_.start()
+    def hideEvent(self, e):
+        t_ = getattr(self, '_sk_t', None)
+        if t_ is not None: t_.stop()
+        super().hideEvent(e)
     def tus_boyu(self, H):
         """K-365: tuş yüksekliği verilen alana göre (klavye ekrandan taşmasın, tuşlar üst üste binmesin)."""
         import re as _re
@@ -4139,7 +4169,7 @@ class Window(QMainWindow):
             with open(os.path.join(self.data_dir,'tema.json'),encoding='utf-8') as f:saved=json.load(f).get('theme')
         except (OSError,ValueError,AttributeError):saved=None
         self.apply_theme(saved if saved in THEMES else 'default',save=False)
-        for key,fn in [('Ctrl+O',self.open_pdf),('Ctrl+S',self.save_pdf),('Ctrl+Z',self.undo),('Ctrl+Shift+Z',self.redo),('F11',self.fullscreen),('Escape',lambda:None if getattr(self,'_exam_full',False) else self.showNormal()),('PageDown',lambda:self.goto(1)),('PageUp',lambda:self.goto(-1))]:
+        for key,fn in [('Ctrl+O',self.open_pdf),('Ctrl+S',self.save_pdf),('Ctrl+Z',self.undo),('Ctrl+Shift+Z',self.redo),('F11',self.fullscreen),('Escape',lambda:None if (getattr(self,'_exam_full',False) or self.erisim_kilitli()) else self.showNormal()),('PageDown',lambda:self.goto(1)),('PageUp',lambda:self.goto(-1))]:
             QShortcut(QKeySequence(key),self,activated=fn)
         QTimer.singleShot(0,self.fit_page)
         self.refresh_colors()
@@ -5363,7 +5393,8 @@ class Window(QMainWindow):
             else: QTimer.singleShot(4000, lambda: self.show_toast('Şu an gösterilecek sınav ya da sınav yeri yok.'))
         self.welcome_go(go)
     def welcome_skip(self):
-        self.hide_welcome(); self.board.finish(); self.showMinimized()   # kapanmaz: görev çubuğuna iner
+        self.hide_welcome(); self.board.finish()
+        if not self.erisim_kilitli(): self.showMinimized()   # kapanmaz: görev çubuğuna iner (K-450: kilitliyken küçülmez)
     def lesson_key(self):
         now = self.exam_clock(); t = now.hour*3600 + now.minute*60 + now.second
         cur = next((n_ for n_, a_, b_, kind in bell_periods(now.weekday()) if kind == 'lesson' and a_ <= t < b_ and n_[0].isdigit()), None)
@@ -5390,7 +5421,14 @@ class Window(QMainWindow):
         es = getattr(self, 'exam_screen', None)
         if es is not None and es.st and es.st.get('phase') != 'preview': self.welcome_key = key; return
         if not self.isMinimized() and time.time() - getattr(self, 'last_touch', 0) < 120: return   # ders sürüyor: 20 sn sonra yine bakılır
+        pasif = getattr(self, '_pasif_t', None)
+        if pasif is not None and pasif >= time.time() - (t - cur[1]) - 5:   # K-453: bu ders başka bir program (tarayıcı vb.) açıldı: Atlas öne gelmez
+            self.welcome_key = key; return
         self.welcome_key = key; self.show_welcome()
+    def uygulama_durumu(self, st):
+        """K-453: Atlas arka plana geçtiği an (başka program öne geldi ya da küçültüldü) kaydedilir; öne gelince silinir."""
+        if st == Qt.ApplicationActive: self._pasif_t = None
+        elif getattr(self, '_pasif_t', None) is None: self._pasif_t = time.time()
     def kelebek_tick(self):
         """Oturma planı: okul günü 07.00–15.00 arası 2 dakikada bir arka planda indirilir; gün geçince silinir."""
         if kalem_mesgul(self): QTimer.singleShot(1200, self.kelebek_tick); return   # K-429: yazarken arka plan işi beklesin
@@ -6670,7 +6708,12 @@ class Window(QMainWindow):
             self.page_label.setText('%s / %s  ·  %%%s' % (self.page+1,len(self.doc),round(self.zoom*100)))
             if hasattr(self,'nav'):self.place_overlays()
         except Exception as e: QMessageBox.warning(self,'Sayfa görüntülenemedi',str(e))
+    def erisim_kilitli(self):
+        er_ = getattr(self, 'erisim', None); return bool(er_ is not None and er_.kilitli)
     def fullscreen(self):
+        if self.erisim_kilitli():   # K-450: teneffüs / kilit: tam ekrandan çıkılamaz (küçültüp başka programlara dokunulmasın)
+            if not self.isFullScreen(): self.showFullScreen()
+            self.show_toast('Tahta kilitli · tam ekrandan çıkılamaz'); return
         going = not self.isFullScreen()
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
         QTimer.singleShot(100,self.fit_page)
@@ -8160,7 +8203,41 @@ class ExamScreen(QWidget):
             self.press_seat = self.seat_at(e.pos())
             if self.press_seat is not None:
                 no_ = self.press_seat; self.long_press(); self.fx_seat = no_; self.fx_t0 = time.monotonic(); self.fx_kind = 'tap'; self.start_fx(.6)
+        else:
+            try: self.yerim_sor(e.pos())
+            except Exception as x: print('yerim sor:', x)
         e.accept()
+    def yerim_sor(self, pos):
+        """K-448: öğrenci kartına (fotoğrafına) dokununca altında 'Yerimi bul' çıkar; ona dokununca sıradaki sınavının salonu açılır, sırası yanıp söner."""
+        b = getattr(self, 'yerim_btn', None)
+        if b is None:
+            b = self.yerim_btn = QPushButton(self); b.setFocusPolicy(Qt.NoFocus); b.hide(); b.clicked.connect(self.yerim_ac)
+            b.setStyleSheet('QPushButton{background:#22e8ff;color:#04202a;border:3px solid #e9fdff;border-radius:16px;padding:10px 22px;font-size:24px;font-weight:800;}'
+                            'QPushButton:pressed{background:#7ff6ff;}')
+            self.yerim_t = QTimer(self); self.yerim_t.setSingleShot(True); self.yerim_t.timeout.connect(b.hide)
+        b.hide(); self.yerim_bilgi = None
+        sira = self.seat_at(pos); plan = getattr(self, 'son_plan', None)
+        if sira is None or not plan: return
+        r = next((x for x in plan.get('liste', []) if x.get('sira') == sira), None)
+        no = str((r or {}).get('no', '')).strip()
+        if not no: return
+        rs = [x for x in self.main.ogrenci_ara(no) if str(x[0].get('no', '')) == no and x[1]]
+        if not rs: return
+        (day, _), lab, now_, ders, salon, sira_, crs = rs[0][1][0]
+        self.yerim_bilgi = (day, ders, salon, sira_)
+        b.setText('Yerimi bul  ·  %s  ›\nSalon %s · Sıra %s' % (tr_name(r.get('ad', '')), salon, sira_)); b.adjustSize()
+        c = self.seat_rects[sira]; x = int(min(max(8, c.center().x() - b.width()/2), self.width() - b.width() - 8))
+        y = int(c.bottom() + 6) if c.bottom() + 6 + b.height() < self.height() - 8 else int(c.top() - b.height() - 6)
+        b.move(x, max(8, y)); b.show(); b.raise_(); self.yerim_t.start(8000)
+        self.fx_seat = sira; self.fx_t0 = time.monotonic(); self.fx_kind = 'yerim'; self.start_fx(.6)
+    def yerim_ac(self):
+        self.yerim_btn.hide(); bilgi = getattr(self, 'yerim_bilgi', None)
+        if not bilgi: return
+        day, ders, salon, sira = bilgi; lst = None
+        for pl in (self.main.kelebek or {}).get('planlar', []):
+            if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders: lst = (pl.get('salonlar') or {}).get(salon); break
+        if not lst: return
+        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_()
     def mouseReleaseEvent(self, e):
         self.press_timer.stop(); self.press_seat = None; e.accept()
     def start_fx(self, dur):
@@ -8170,8 +8247,8 @@ class ExamScreen(QWidget):
     def draw_fx(self, p, k):
         """Dokunuş: sıranın çevresinde genişleyen kırmızı dalga; onay: kartlar sırayla yeşil parlar."""
         t = time.monotonic() - getattr(self, 'fx_t0', -99)
-        if getattr(self, 'fx_kind', '') == 'tap' and t < .6 and getattr(self, 'fx_seat', None) in self.seat_rects:
-            r = self.seat_rects[self.fx_seat]; g = t/.6; q = QColor(255, 77, 94, int(220*(1 - g)))
+        if getattr(self, 'fx_kind', '') in ('tap', 'yerim') and t < .6 and getattr(self, 'fx_seat', None) in self.seat_rects:
+            r = self.seat_rects[self.fx_seat]; g = t/.6; q = QColor(255, 77, 94, int(220*(1 - g))) if self.fx_kind == 'tap' else QColor(34, 232, 255, int(220*(1 - g)))
             p.setPen(QPen(q, 4*k)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(r.adjusted(-18*k*g, -18*k*g, 18*k*g, 18*k*g), 12*k, 12*k)
         if getattr(self, 'fx_kind', '') == 'ok' and t < 1.6:
             for i, no in enumerate(sorted(self.seat_rects)):
@@ -8282,13 +8359,14 @@ class ExamScreen(QWidget):
                 own_ = exam_course(day.isoformat(), st['lesson'], plan['sinif'], own) if hasattr(day, 'isoformat') else own
                 when = ('Başlamasına %s' % ms(max(0, left))) if phase == 'before' else ('%s %d %s · %s – %s' % ('Bugün' if day == st.get('today', day) else '', day.day, TR_MONTHS[day.month-1], hm(st['start']), hm(st['end']))).strip()
                 ev['baslik'] = 'Sınav yerleri  ·  %s' % plan['sinif']
-                self.absent = set()
+                self.absent = set(); self.son_plan = ev   # K-448: dokunulan kartın öğrencisi
                 ev['saat'] = ('Başlamasına %s' % ms(max(0, left))) if phase == 'before' else '%s – %s' % (hm(st['start']), hm(st['end']))
                 self.draw_seatmap(p, W, H - 40*k, k, font, ev, theme, accent, '%s  ·  %s  ·  %s' % (st['lesson'], own_, ('Bugün' if day == st.get('today', day) else '%d %s' % (day.day, TR_MONTHS[day.month-1]))))
-                p.end(); return
+                self.draw_fx(p, k); p.end(); return
         seatmap = bool(plan and plan['tur'] == 'salon' and phase in ('before', 'during') and seat_layout(plan))
         yok_on = seatmap and self.main.yok_open(st)
         if yok_on != self.yok_on: self.yok_on = yok_on; QTimer.singleShot(0, self.update_yok_btn)
+        self.son_plan = plan if seatmap else None
         if seatmap:
             self.absent = set(self.main.yok_state(st)['gelmedi'])
             self.draw_seatmap(p, W, H, k, font, dict(plan, saat=('Kalan %s' if phase == 'during' else 'Başlamasına %s') % ms(max(0, left)), hb_per=.6 if phase == 'during' and left <= 300 else 1.0), theme, accent, '%s  ·  %s' % (st['lesson'], own if self.grade in exams else 'Ortak Yazılı Sınav'))
@@ -9183,7 +9261,7 @@ class YerimDialog(QDialog):
         super().__init__(main); self.plan = plan; self.ders = ders; self.day = day; self.sira = sira; self.seat_rects = {}; self.absent = set()
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
         g = main.geometry(); self.setGeometry(g)
-        self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(self.update); self.t.start()
+        self.nabiz = None; self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(lambda: self.update(self.nabiz) if self.nabiz is not None else self.update()); self.t.start()
         QTimer.singleShot(30000, self.accept)
     def paintEvent(self, e):
         from PyQt5.QtGui import QPainter, QFont, QPen
@@ -9191,8 +9269,19 @@ class YerimDialog(QDialog):
         W, H = self.width(), self.height(); k = min(W/1600, H/900)
         fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
         def font(px, b=False): f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setWeight(QFont.Bold if b else QFont.Medium); return f
-        try: _draw_seatmap(self, p, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
-        except Exception as ex: print('yerim:', ex)
+        # K-449: salon (fotoğraflar, yazılar) bir kez çizilip saklanır; saniyede 20 kez baştan çizmek yavaş tahtada ekranı donduruyordu.
+        on = getattr(self, '_on', None)
+        if on is None or on[0] != (W, H):
+            pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
+            try: _draw_seatmap(self, q, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
+            except Exception as ex: print('yerim:', ex)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); bar_ = QRectF(0, H - 60*k, W, 60*k); q.drawRect(bar_)
+            q.setFont(font(26, True)); q.setPen(QColor('#7ff6ff'))
+            q.drawText(bar_, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
+            q.end(); on = self._on = ((W, H), pm, dict(self.seat_rects))
+            c0 = on[2].get(self.sira)
+            if c0 is not None: self.nabiz = c0.adjusted(-48*k, -48*k, 48*k, 48*k).toAlignedRect()   # sonraki çizimler yalnız bu bölge
+        p.drawPixmap(e.rect(), on[1], e.rect()); self.seat_rects = on[2]
         c = self.seat_rects.get(self.sira)
         if c is not None:   # neon nabız: parlayan çerçeve büyüyüp küçülür
             a = .5 + .5*math.sin(time.time()*6.0); gl = QColor('#22e8ff')
@@ -9201,9 +9290,6 @@ class YerimDialog(QDialog):
                 gl.setAlpha(int(al*(.45 + .55*a))); p.setPen(QPen(gl, w_*k)); p.setBrush(Qt.NoBrush)
                 p.drawRoundedRect(c.adjusted(-(3 + 4*a)*k, -(3 + 4*a)*k, (3 + 4*a)*k, (3 + 4*a)*k), 12*k, 12*k)
             p.setPen(QPen(QColor('#e9fdff'), 3*k)); p.drawRoundedRect(c.adjusted(-2*k, -2*k, 2*k, 2*k), 11*k, 11*k)
-        p.setPen(Qt.NoPen); p.setBrush(QColor(10, 18, 30, 235)); bar = QRectF(0, H - 60*k, W, 60*k); p.drawRect(bar)
-        p.setFont(font(26, True)); p.setPen(QColor('#7ff6ff'))
-        p.drawText(bar, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
         p.end()
     def mousePressEvent(self, e): self.accept()
 
@@ -11600,6 +11686,8 @@ class ProjeOgretmen(QDialog):
         self.sg_yok.setStyleSheet('QPushButton{background:%s;color:%s;}' % (('#22e8ff', '#0d1726') if not sg else ('#1d3150', 'white')))
         msg = 'Sınıf mevcudu %d · toplam kontenjan %d · %d öğrenci tercih yaptı' % (n, top, len(self.d.get('tercihler', {})))
         if top < n: msg += '  —  <span style="color:#ffb020">kontenjan sınıf mevcudundan az: bazı öğrenciler yerleşemez</span>'
+        eksik_ = sum(1 for no_ in self.d.get('tercihler', {}) if not proje_tamam(self.d, no_))
+        if eksik_: msg += '<br><span style="color:#ffb020">%d öğrencinin tercihi eksik (%d tercih gerekli): kuraya girmez, tercihini tamamlamalı</span>' % (eksik_, proje_gerek(self.d))
         msg += '<br>Durum: <b>%s</b>' % {'kapali': 'seçim kapalı', 'acik': 'seçim açık — öğrenciler tahtada tercih yapıyor', 'dagitildi': 'dağıtım yapıldı (%s)' % self.d.get('kura_zaman', '')}.get(dur, dur)
         if dur == 'dagitildi': msg += ' · %d yerleşti, %d açıkta' % (len(self.d.get('sonuc', {})), n - len(self.d.get('sonuc', {})))
         self.info.setText(msg)
@@ -11614,7 +11702,8 @@ class ProjeOgretmen(QDialog):
     def dagit(self):
         if self.d.get('durum') == 'dagitildi' and QMessageBox.question(self, 'Proje seçimi', 'Kura yeniden çekilsin mi? Elle yapılan düzeltmeler silinir.') != QMessageBox.Yes: return
         import datetime
-        self.d['sonuc'] = proje_dagit({no: t for no, t in self.d.get('tercihler', {}).items() if proje_tamam(self.d, no)}, self.d.get('kont', {}))   # K-432: yalnız 3 tercihini tamamlayanlar; self.d['durum'] = 'dagitildi'
+        self.d['sonuc'] = proje_dagit({no: t for no, t in self.d.get('tercihler', {}).items() if proje_tamam(self.d, no)}, self.d.get('kont', {}))   # K-432: yalnız 3 tercihini tamamlayanlar
+        self.d['durum'] = 'dagitildi'   # K-451: bu satır K-432'de yoruma karışmıştı; kura çekiliyor ama 'dağıtıldı' olmuyordu
         self.d['kura_zaman'] = datetime.datetime.now().strftime('%d.%m.%Y %H.%M'); self.save(); self.main.proje_refresh()
     def duzelt(self):
         """Sonucu düzelt: tam ekran liste; her öğrencinin satırına dokununca dersler büyük düğmelerle çıkar (açılır liste yok)."""
@@ -12048,6 +12137,7 @@ class ErisimYoneticisi:
         if yabanci:
             if modal is not None: modal.raise_(); modal.activateWindow()
             else: m.showFullScreen(); m.raise_(); m.activateWindow()
+        elif modal is None and not m.isFullScreen(): m.showFullScreen()   # K-450: kilitliyken pencere küçülmüşse (herhangi bir yolla) yeniden tam ekran
         is_ = getattr(self, '_zorla_is', None)
         if is_ is not None and is_.is_alive(): return
         benim = {int(m.winId())} | {int(w.winId()) for w in QApplication.topLevelWidgets() if w.isVisible()}
@@ -12190,7 +12280,7 @@ class YeniPanel(QWidget):
         from PyQt5.QtWidgets import QStackedWidget
         self.yigin = QStackedWidget(); v.addWidget(self.yigin)   # K-374: sayfa kendi boyunda; saat hemen altında
         self.yigin.addWidget(self.sayfa_araclar()); self.yigin.addWidget(self.sayfa_ekle()); self.yigin.addWidget(self.sayfa_okul())
-        v.addSpacing(10); self.saat = PanelClock(); self.saat.setFixedHeight(104); v.addWidget(self.saat); v.addStretch(1)   # K-373/374: saat araçların hemen altında
+        v.addSpacing(10); self.saat = PanelClock(); self.saat.setMinimumHeight(104); v.addWidget(self.saat, 1)   # K-452: saat kalan yeri kullanır (analog kadran)   # K-373/374: saat araçların hemen altında
         # alt: geri al · ileri al · tam ekran · ayarlar
         alt = QHBoxLayout(); alt.setSpacing(6); v.addLayout(alt)
         for ad, fn in (('Geri al', m.undo), ('İleri al', m.redo), ('Tam ekran', m.fullscreen), ('Ayarlar', m.open_panel_settings)):   # yazısız ikon (adı dokunma ipucunda)
@@ -13905,23 +13995,126 @@ class Spotlight(QWidget):
         self.mode = None; self.remask(); self.update()
 
 class PanelClock(QWidget):
-    """Büyük saat ve tarih: sol panelin altındaki boşlukta."""
+    """Sol paneldeki saat. K-452: web panelindeki saatin aynısı — analog kadran (serif rakamlar, ince iç halka, yaprak akrep/yelkovan,
+    ortada silik okul logosu, turuncu saniye), altında dijital saat ve tarih. Yer dar ise (eski küçük panel) yalnız dijital saat ve tarih.
+    Kadran (logo, çizgiler, rakamlar) bir kez çizilip saklanır; her saniye yalnız ibreler ve yazı."""
     def __init__(self, parent=None):
-        super().__init__(parent); self.setMinimumHeight(110); self.now = None
-        self.timer = QTimer(self); self.timer.timeout.connect(self.update); self.timer.start(1000)
+        super().__init__(parent); self.setMinimumHeight(110); self.now = None; self._kadran = None; self._isik = None; self._logo_r = None; self._son_sn = None
+        self.timer = QTimer(self); self.timer.timeout.connect(self.tik); self.timer.start(50)
+    ISIK_DONGU, ISIK_BAS = 6.0, .55   # K-455: web panelindeki gibi logonun üstünden 6 sn'de bir geçen ışık (döngünün son %45'i)
+    def tik(self):
+        """Saniye değişince bütün saat; ışık geçerken yalnız logo bölgesi (yazarken ışık beklemede: kalem akıcılığı)."""
+        import datetime
+        sn = (self.now or datetime.datetime.now()).second
+        if sn != self._son_sn: self._son_sn = sn; self.update(); return
+        f = (time.time() % self.ISIK_DONGU)/self.ISIK_DONGU
+        if f >= self.ISIK_BAS - .02 and self._logo_r is not None and self.isVisible():
+            try:
+                b_ = getattr(self.window(), 'board', None)
+                if b_ is not None and getattr(b_, 'active', None) is not None: return
+            except Exception: pass
+            self.update(self._logo_r)
+    def isik_logo(self, D):
+        """Logonun parlak kopyası (açık yerleri parlar): ışık bandı yalnız logonun üstünde görünür. Bir kez hazırlanır."""
+        k_ = self._isik
+        if k_ is not None and k_[0] == D: return k_[1]
+        from PyQt5.QtGui import QImage
+        n = max(8, int(D*.6)); pm = None
+        try:
+            lg = QPixmap(LOGO_RESMI) if os.path.isfile(LOGO_RESMI) else QPixmap()
+            if not lg.isNull():
+                im = lg.toImage().scaled(n, n, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_ARGB32)
+                g = im.convertToFormat(QImage.Format_Grayscale8)
+                t_ = QImage(n, n, QImage.Format_ARGB32); t_.fill(QColor('#e6fdff')); t_.setAlphaChannel(g)
+                q = QPainter(t_); q.setCompositionMode(QPainter.CompositionMode_DestinationIn); q.drawImage(0, 0, im); q.end()   # logonun dışı saydam kalsın
+                pm = QPixmap.fromImage(t_)
+        except Exception as x: print('saat ışığı:', x)
+        self._isik = (D, pm); return pm
+    def kadran(self, D):
+        k_ = self._kadran
+        if k_ is not None and k_[0] == D: return k_[1]
+        from PyQt5.QtGui import QFont
+        dpr = self.devicePixelRatioF() if hasattr(self, 'devicePixelRatioF') else 1.0
+        pm = QPixmap(int(D*dpr), int(D*dpr)); pm.setDevicePixelRatio(dpr); pm.fill(Qt.transparent)
+        p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.SmoothPixmapTransform); u = D/100.0; p.scale(u, u)
+        for w_, a in ((5.0, 26), (3.2, 50)):   # camgöbeği ışıma
+            q = QColor('#22e8ff'); q.setAlpha(a); p.setPen(QPen(q, w_)); p.setBrush(Qt.NoBrush); p.drawEllipse(QPointF(50, 50), 46.2, 46.2)
+        p.setPen(QPen(QColor('#22e8ff'), 1.6)); p.setBrush(QColor(13, 23, 38, 235)); p.drawEllipse(QPointF(50, 50), 46.2, 46.2)
+        try:
+            lg = QPixmap(LOGO_RESMI) if os.path.isfile(LOGO_RESMI) else QPixmap()
+            if not lg.isNull(): p.setOpacity(.24); p.drawPixmap(QRectF(20, 20, 60, 60), lg, QRectF(lg.rect())); p.setOpacity(1)
+        except Exception: pass
+        for i in range(60):   # dakika çizgileri
+            p.save(); p.translate(50, 50); p.rotate(i*6)
+            if i % 5 == 0: p.setPen(QPen(QColor('#7ff6ff'), 1.4, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, -45), QPointF(0, -39.8))
+            else: p.setPen(QPen(QColor('#3a5a86'), 1)); p.drawLine(QPointF(0, -43), QPointF(0, -40.5))
+            p.restore()
+        p.setPen(QPen(QColor(127, 246, 255, 72), .5)); p.setBrush(Qt.NoBrush); p.drawEllipse(QPointF(50, 50), 37.6, 37.6)   # ince iç halka
+        f = QFont('Liberation Serif'); f.setStyleHint(QFont.Serif); f.setPixelSize(max(8, int(round(7.4*u)))); f.setWeight(QFont.DemiBold)
+        p.resetTransform(); p.scale(1, 1); p.setFont(f)   # rakamlar ekran pikselinde (keskin)
+        for n in range(1, 13):
+            a = math.radians(n*30); x = (50 + 31.6*math.sin(a))*u; y = (50 - 31.6*math.cos(a))*u; r_ = QRectF(x - 12*u, y - 6*u, 24*u, 12*u)
+            p.setPen(QColor(13, 23, 38, 215))
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)): p.drawText(r_.translated(dx, dy), Qt.AlignCenter, str(n))
+            p.setPen(QColor('#d9fbff')); p.drawText(r_, Qt.AlignCenter, str(n))
+        p.end(); self._kadran = (D, pm); return pm
     def paintEvent(self, e):
         import datetime
         now = self.now or datetime.datetime.now(); p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)
-        r = self.rect(); cy = r.height()/2
-        p.setPen(QPen(QColor('#364a63'), 1)); p.drawLine(QPointF(12, 2), QPointF(r.width()-12, 2))
-        tr_ = QRectF(0, cy-60, r.width(), 64); hm = now.strftime('%H:%M'); p.setFont(BellClock.font(52, True))
-        for w_, a in ((4, 45), (2, 90)):   # "Nerede sınava gireceğim?" ile aynı neon camgöbeği
+        r = self.rect(); W, H = r.width(), r.height()
+        p.setPen(QPen(QColor('#364a63'), 1)); p.drawLine(QPointF(12, 2), QPointF(W - 12, 2))
+        tarih = '%d %s %d' % (now.day, TR_MONTHS[now.month-1], now.year); gun = TR_DAYS[now.weekday()]
+        D = int(min(W - 28, H - 128, 210))
+        if D < 120:   # dar yer: yalnız dijital saat ve tarih (eski görünüm)
+            cy = H/2; tr_ = QRectF(0, cy-60, W, 64); hm = now.strftime('%H:%M'); p.setFont(BellClock.font(52, True))
+            for w_, a in ((4, 45), (2, 90)):
+                q = QColor('#22e8ff'); q.setAlpha(a); p.setPen(q)
+                for dx, dy in ((-w_, 0), (w_, 0), (0, -w_), (0, w_)): p.drawText(tr_.translated(dx, dy), Qt.AlignCenter, hm)
+            p.setPen(QColor('#7ff6ff')); p.drawText(tr_, Qt.AlignCenter, hm)
+            p.setPen(QColor('#a9b9cf')); p.setFont(BellClock.font(16))
+            p.drawText(QRectF(0, cy+6, W, 22), Qt.AlignCenter, tarih); p.drawText(QRectF(0, cy+28, W, 22), Qt.AlignCenter, gun)
+            p.end(); return
+        x0 = (W - D)/2.0; y0 = 12.0; p.drawPixmap(QPointF(x0, y0), self.kadran(D))
+        u = D/100.0; h_, m_, s_ = now.hour, now.minute, now.second
+        self._logo_r = QRectF(x0 + 19*u, y0 + 19*u, 62*u, 62*u).toAlignedRect()
+        f_ = (time.time() % self.ISIK_DONGU)/self.ISIK_DONGU; il = self.isik_logo(D)
+        if f_ >= self.ISIK_BAS and il is not None and not il.isNull():   # ışık bandı soldan sağa geçer (eğik, kenarları yumuşak)
+            from PyQt5.QtGui import QPainterPath as _PP
+            g_ = (f_ - self.ISIK_BAS)/(1 - self.ISIK_BAS); bx = -10 + 105*g_
+            p.save(); p.translate(x0, y0); p.scale(u, u)
+            daire = _PP(); daire.addEllipse(QPointF(50, 50), 30, 30)
+            for gen, op in ((22, .16), (14, .2), (7, .28)):   # dış kenardan içe: yumuşak geçiş (toplam ~.65)
+                bant = _PP(); sk = math.tan(math.radians(18))
+                cx = bx + 11; y1, y2 = 10.0, 90.0
+                bant.moveTo(cx - gen/2 - sk*(y1 - 50)*-1, y1); bant.lineTo(cx + gen/2 - sk*(y1 - 50)*-1, y1)
+                bant.lineTo(cx + gen/2 - sk*(y2 - 50)*-1, y2); bant.lineTo(cx - gen/2 - sk*(y2 - 50)*-1, y2); bant.closeSubpath()
+                p.save(); p.setClipPath(daire.intersected(bant)); p.setOpacity(op); p.drawPixmap(QRectF(20, 20, 60, 60), il, QRectF(il.rect())); p.restore()
+            p.restore()
+        from PyQt5.QtGui import QPolygonF as _Pg
+        def ibre(aci, pts, renk, kenar):
+            p.save(); p.translate(x0 + 50*u, y0 + 50*u); p.rotate(aci); p.scale(u, u)
+            q = QColor('#22e8ff'); q.setAlpha(70); p.setPen(QPen(q, 1.6)); p.setBrush(Qt.NoBrush); p.drawPolygon(_Pg([QPointF(a, b) for a, b in pts]))   # hafif ışıma
+            p.setPen(QPen(QColor('#0d1726'), kenar)); p.setBrush(QColor(renk)); p.drawPolygon(_Pg([QPointF(a, b) for a, b in pts])); p.restore()
+        ibre((h_ % 12)*30 + m_*.5, ((0, 6), (-2.5, 0), (0, -23), (2.5, 0)), '#ffffff', .5)      # akrep (yaprak)
+        ibre(m_*6 + s_*.1, ((0, 7), (-1.9, 0), (0, -36), (1.9, 0)), '#dffbff', .45)             # yelkovan
+        p.save(); p.translate(x0 + 50*u, y0 + 50*u); p.rotate(s_*6); p.scale(u, u)                   # saniye: turuncu
+        q = QColor('#ff9a3a'); q.setAlpha(80); p.setPen(QPen(q, 3.0, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, 8), QPointF(0, -40))
+        p.setPen(QPen(QColor('#ff9a3a'), 1.3, Qt.SolidLine, Qt.RoundCap)); p.drawLine(QPointF(0, 8), QPointF(0, -40))
+        p.setPen(Qt.NoPen); p.setBrush(QColor('#ff9a3a')); p.drawEllipse(QPointF(0, -40), 2.2, 2.2); p.restore()
+        p.setPen(QPen(QColor('#0d1726'), 1*u)); p.setBrush(QColor('#ff9a3a')); p.drawEllipse(QPointF(x0 + 50*u, y0 + 50*u), 3.2*u, 3.2*u)
+        # dijital saat (saniye küçük, turuncu) ve tarih
+        ty = y0 + D + 6; hm = now.strftime('%H.%M'); sn = '%02d' % s_
+        fb = BellClock.font(40, True); fs = BellClock.font(20, True)
+        from PyQt5.QtGui import QFontMetrics as _FM
+        wb = _FM(fb).horizontalAdvance(hm); ws = _FM(fs).horizontalAdvance('00'); bx = (W - wb - 6 - ws)/2.0
+        tr_ = QRectF(bx, ty, wb, 50); p.setFont(fb)
+        for w_, a in ((3, 45), (1.5, 90)):
             q = QColor('#22e8ff'); q.setAlpha(a); p.setPen(q)
             for dx, dy in ((-w_, 0), (w_, 0), (0, -w_), (0, w_)): p.drawText(tr_.translated(dx, dy), Qt.AlignCenter, hm)
-        p.setPen(QColor('#7ff6ff')); p.drawText(tr_, Qt.AlignCenter, hm)
-        p.setPen(QColor('#a9b9cf')); p.setFont(BellClock.font(16))
-        p.drawText(QRectF(0, cy+6, r.width(), 22), Qt.AlignCenter, '%d %s %d' % (now.day, TR_MONTHS[now.month-1], now.year))
-        p.drawText(QRectF(0, cy+28, r.width(), 22), Qt.AlignCenter, TR_DAYS[now.weekday()])
+        p.setPen(QColor('#e9fdff')); p.drawText(tr_, Qt.AlignCenter, hm)
+        p.setFont(fs); p.setPen(QColor('#ffd2a1')); p.drawText(QRectF(bx + wb + 6, ty + 14, ws + 2, 30), Qt.AlignLeft | Qt.AlignVCenter, sn)
+        p.setFont(BellClock.font(16)); p.setPen(QColor('#a9b9cf')); p.drawText(QRectF(0, ty + 52, W, 22), Qt.AlignCenter, tarih)
+        p.setFont(BellClock.font(16, True)); p.setPen(QColor('#7ff6ff')); p.drawText(QRectF(0, ty + 74, W, 22), Qt.AlignCenter, gun)
         p.end()
 
 # ---- Ağdaki yazıcıları bulma (yalnızca yönetim panelinden "Yazıcıları bul" komutuyla) ----
@@ -16518,6 +16711,7 @@ def main():
         QMessageBox.information(None,PRODUCT,'Uygulama zaten açık. Görev çubuğundaki pencereye dönün; serbest kalem için Ekrana yaz düğmesini kullanın.');return
     app.umal_lock = lock   # yeniden başlatmada bırakılır
     window = Window(); window.show()
+    app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

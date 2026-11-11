@@ -448,6 +448,7 @@ def make_board(background='white', width=960, height=540):
     doc.set_metadata({'title':APP_NAME,'keywords':'UMAL-board:'+background})
     return doc
 
+_CIZIM_ONB = {}   # K-456: id(çizgi) -> (parmak izi, çokgen, yol); çizgi değişince parmak izi tutmaz, yeniden hesaplanır
 def nib_outline(stroke):
     """Same directional nib geometry for the screen and vector PDF export."""
     if stroke.get('w') and len(stroke['w']) == len(stroke['points']): return fluid_outline(stroke)
@@ -2535,20 +2536,27 @@ class Board(QWidget):
                 p.drawRect(r)
             return
         p.setOpacity(.3 if s['tool'] == 'highlight' else 1)
-        outline = nib_outline(s)
-        if outline:
+        pts = s['points']
+        fp_ = (len(pts), tuple(pts[0]) if pts else (), tuple(pts[-1]) if pts else (), s.get('width'), s.get('nib'), s['tool'], len(s.get('w') or ()))
+        oc_ = _CIZIM_ONB.get(id(s))
+        if oc_ is None or oc_[0] != fp_:   # K-456: çizginin çokgeni / yolu bir kez hesaplanır (her ekran çiziminde Python'da baştan değil)
+            ol_ = nib_outline(s)
+            oc_ = (fp_, QPolygonF([QPointF(*pt) for pt in ol_]) if ol_ else None, None if ol_ or len(pts) < 2 else stroke_path(pts))
+            if len(_CIZIM_ONB) > 40000: _CIZIM_ONB.clear()
+            _CIZIM_ONB[id(s)] = oc_
+        if oc_[1] is not None:
             p.setPen(Qt.NoPen); p.setBrush(QColor(s['color']))
-            p.drawPolygon(QPolygonF([QPointF(*pt) for pt in outline]),Qt.WindingFill)
+            p.drawPolygon(oc_[1], Qt.WindingFill)
             if s.get('w'):   # Akıcı: round, tapered ends
                 for i in (0, -1):
                     r = max(.25, s['width']/2*s['w'][i]); p.drawEllipse(QPointF(*s['points'][i]), r, r)
             p.setBrush(Qt.NoBrush)
             return
-        pts = s['points']; passes = style_passes(s)
-        if passes: paint_passes(p, stroke_path(pts), passes, rect, self.devicePixelRatioF()); return
+        passes = style_passes(s)
+        if passes: paint_passes(p, oc_[2] if oc_[2] is not None else stroke_path(pts), passes, rect, self.devicePixelRatioF()); return
         p.setPen(stroke_pen(s))
         if len(pts) == 1: p.drawPoint(QPointF(*pts[0]))
-        else: p.drawPath(stroke_path(pts))
+        else: p.drawPath(oc_[2] if oc_[2] is not None else stroke_path(pts))
     # --- Hazır sayfa görüntüsü: her yeni çizgide eski çizgiler yeniden çizilmez -------
     def mark_key(self):
         o = self.owner; ms = o.marks.get(o.page, [])

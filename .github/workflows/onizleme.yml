@@ -43,7 +43,7 @@ jobs:
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
           for e in 1920x1080 1366x768 1280x720; do
             Xvfb :7 -screen 0 ${e}x24 -nolisten tcp >/dev/null 2>&1 & X=$!; sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & O=$!; sleep 1
-            DISPLAY=:7 timeout 60 python3 klavye_t.py $e >> /tmp/olcum.txt 2>&1 || echo "$e hata" >> /tmp/olcum.txt
+            DISPLAY=:7 PYTHONPATH=/usr/lib/umal-tahta/python timeout 60 python3 klavye_t.py $e >> /tmp/olcum.txt 2>&1 || echo "$e hata" >> /tmp/olcum.txt
             kill $O $X; sleep 1
           done
           cat /tmp/olcum.txt

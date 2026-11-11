@@ -9341,7 +9341,10 @@ class YerimDialog(QDialog):
     def __init__(self, main, plan, ders, day, sira):
         super().__init__(main); self.plan = plan; self.ders = ders; self.day = day; self.sira = sira; self.seat_rects = {}; self.absent = set()
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
-        g = main.geometry(); self.setGeometry(g)
+        # K-458: pencerenin değil ekranın tamamı (tahta tam ekranda değilken üst çubuk kadar aşağı kayıp alt şerit çerçevenin altında kalıyordu)
+        try: g = (main.screen() if hasattr(main, 'screen') and main.screen() else QApplication.primaryScreen()).geometry()
+        except Exception: g = main.geometry()
+        self.setGeometry(g); self.setWindowState(Qt.WindowFullScreen)
         self.nabiz = None; self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(lambda: self.update(self.nabiz) if self.nabiz is not None else self.update()); self.t.start()
         QTimer.singleShot(30000, self.accept)
     def paintEvent(self, e):
@@ -9354,9 +9357,10 @@ class YerimDialog(QDialog):
         on = getattr(self, '_on', None)
         if on is None or on[0] != (W, H):
             pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
-            try: _draw_seatmap(self, q, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
+            pay = max(16, int(H*.035))   # tahtanın alt çerçevesi ekranın kenarını örter: alt şerit onun üstünde
+            try: _draw_seatmap(self, q, W, H - 60*k - pay, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
             except Exception as ex: print('yerim:', ex)
-            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); bar_ = QRectF(0, H - 60*k, W, 60*k); q.drawRect(bar_)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); q.drawRect(QRectF(0, H - 60*k - pay, W, 60*k + pay)); bar_ = QRectF(0, H - 60*k - pay, W, 60*k)
             q.setFont(font(26, True)); q.setPen(QColor('#7ff6ff'))
             q.drawText(bar_, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
             q.end(); on = self._on = ((W, H), pm, dict(self.seat_rects))

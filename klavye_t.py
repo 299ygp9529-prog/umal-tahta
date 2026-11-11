@@ -1,6 +1,10 @@
 import sys, os, datetime, subprocess
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
+kip = sys.argv[2] if len(sys.argv) > 2 else ''
+os.environ['QT_ACCESSIBILITY'] = '0'
+if kip == 'yeni':
+    os.environ['AT_SPI_BUS_ADDRESS'] = 'unix:path=/nonexistent/umal-atspi-kapali'; os.environ['NO_AT_BRIDGE'] = '1'
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore import QTimer
 app = QApplication(sys.argv)
@@ -22,6 +26,8 @@ def bitir():
     alt = kb.mapToGlobal(kb.rect().bottomLeft()).y()
     print(etiket, 'ekran', scr.width(), scr.height(), 'pencere', g.x(), g.y(), g.width(), g.height(), 'klavye_alt', alt, 'bilet_h', d.kart.height(), 'tus', getattr(kb, '_H', 56),
           'SIGIYOR' if alt <= scr.bottom() - 30 and g.y() >= scr.top() else 'TASIYOR')
-    subprocess.run(['import', '-window', 'root', '/tmp/onizleme/klavye-%s.png' % etiket]); app.quit()
-d.show(); QTimer.singleShot(1200, lambda: d.edit.setText('4')); QTimer.singleShot(3500, bitir)
+    subprocess.run(['import', '-window', 'root', '/tmp/onizleme/klavye-%s.png' % etiket]); 
+    if kip: subprocess.run(['python3', '/tmp/atspi_bak.py', kip])
+    app.quit()
+d.show(); QTimer.singleShot(1200, lambda: d.edit.setText('4')); QTimer.singleShot(5000 if kip else 3500, bitir)
 app.exec_()

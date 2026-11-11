@@ -8969,19 +8969,19 @@ class OgrenciAraDialog(QDialog):
             scr = (self.screen() if hasattr(self, 'screen') and self.screen() else QApplication.primaryScreen()).availableGeometry()
             pay = max(40, int(scr.height()*0.06))   # tahtanın alt çerçevesi ekranın kenarını örter
             enfazla = scr.height() - 12 - pay
-            kb = getattr(self, '_kb', None); lay = self.layout()
-            self.kart.setMaximumHeight(16777215)
+            kb = getattr(self, '_kb', None); lay = self.layout(); K = self.kart
+            def toplam():
+                K.setMinimumHeight(K.heightForWidth(K.width()) if K.isVisible() else 0); K.updateGeometry(); lay.invalidate(); lay.activate()
+                return lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
+            K.ust = None
             if kb is not None: kb.tus_boyu(56)
-            lay.activate()
-            gerek = lambda: lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalSizeHint().height()
-            fazla = gerek() - enfazla
-            if fazla > 0 and self.kart.isVisible():
-                kh = self.kart.heightForWidth(self.kart.width()); yeni = max(230, kh - fazla)
-                self.kart.setMaximumHeight(yeni); fazla -= kh - yeni
+            fazla = toplam() - enfazla
+            if fazla > 0 and K.isVisible():
+                kh = K.heightForWidth(K.width()); K.ust = max(230, kh - fazla); fazla = toplam() - enfazla
             if fazla > 0 and kb is not None and kb.isVisible():
-                kb.tus_boyu(max(40, 56 - int(math.ceil(fazla/5.0))))
-            lay.activate(); h = min(enfazla, gerek())
-            self.resize(self.width(), h)
+                kb.tus_boyu(max(40, 56 - int(math.ceil(fazla/5.0)))); fazla = toplam() - enfazla
+            h = min(enfazla, toplam())
+            self.setMinimumHeight(0); self.resize(self.width(), h)
             y = max(scr.top() + 6, min(self.y(), scr.bottom() - pay - h))
             if y != self.y(): self.move(self.x(), y)
         except Exception as x: print('ara sığdır:', x)
@@ -9051,12 +9051,16 @@ class BiletKart(QWidget):
         self.d = d; self.show(); self.tm.start(); self.updateGeometry(); self.update()
     def gizle(self):
         self.d = None; self.tm.stop(); self.hide()
+    ust = None   # K-446: ekrana sığsın diye en çok bu yükseklik (bilet orantılı küçülür)
     def resizeEvent(self, e):
         h_ = int(min(self.width(), 1000)*self.BH/self.BW) + 24
+        if self.ust: h_ = min(h_, self.ust)
         if self.minimumHeight() != h_: self.setMinimumHeight(h_)
         super().resizeEvent(e)
     def hasHeightForWidth(self): return True
-    def heightForWidth(self, w): return int(w*self.BH/self.BW) + 24
+    def heightForWidth(self, w):
+        h_ = int(min(w, 1000)*self.BH/self.BW) + 24
+        return min(h_, self.ust) if self.ust else h_
     def sizeHint(self):
         from PyQt5.QtCore import QSize
         return QSize(1100, self.heightForWidth(1100))
@@ -16479,7 +16483,12 @@ def install_turkish(app):
 def main():
     # K-353: Atlas'taki her yazı alanının kendi Türkçe klavyesi var; Pardus'un ekran klavyesi de açılınca iki klavye çıkıyordu.
     # Sistem klavyesi yazı alanını erişilebilirlik (AT-SPI) üzerinden fark eder: Atlas için kapatılır. (UMAL_SISTEM_KLAVYE=1: açık kalsın)
-    if os.environ.get('UMAL_SISTEM_KLAVYE') != '1': os.environ['QT_ACCESSIBILITY'] = '0'
+    if os.environ.get('UMAL_SISTEM_KLAVYE') != '1':
+        os.environ['QT_ACCESSIBILITY'] = '0'
+        # K-447: Qt 5 QT_ACCESSIBILITY'ye bakmıyor; Pardus ekran klavyesi yine açılıyordu. Erişilebilirlik yolu boş bir adrese yönlendirilir:
+        # Atlas'ın yazı alanları sistem klavyesine hiç görünmez, yalnız Atlas'ın kendi klavyesi açılır.
+        os.environ['AT_SPI_BUS_ADDRESS'] = 'unix:path=/nonexistent/umal-atspi-kapali'; os.environ['NO_AT_BRIDGE'] = '1'
+        os.environ.pop('QT_LINUX_ACCESSIBILITY_ALWAYS_ON', None)
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     # Keep every pen/touch sample (Qt merges fast moves by default, which
     # turns curves into visible corners on interactive boards).

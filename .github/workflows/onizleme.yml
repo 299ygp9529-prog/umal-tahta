@@ -39,14 +39,23 @@ jobs:
           mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
       - name: Klavye sığma
         run: |
-          cp aday75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; mkdir -p /tmp/onizleme
-          export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1
-          for e in 1920x1080 1366x768 1280x720; do
-            Xvfb :7 -screen 0 ${e}x24 -nolisten tcp >/dev/null 2>&1 & X=$!; sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & O=$!; sleep 1
-            DISPLAY=:7 PYTHONPATH=/usr/lib/umal-tahta/python timeout 60 python3 klavye_t.py $e >> /tmp/olcum.txt 2>&1 || echo "$e hata" >> /tmp/olcum.txt
-            kill $O $X; sleep 1
+          apt-get install -y -qq --no-install-recommends at-spi2-core python3-pyatspi >/dev/null
+          cp atspi_bak.py /tmp/; mkdir -p /tmp/onizleme
+          export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
+          for surum in eski yeni; do
+            cp ${surum}75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
+            for e in 1920x1080 1366x768 1280x720; do
+              Xvfb :7 -screen 0 ${e}x24 -nolisten tcp >/dev/null 2>&1 & X=$!; sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & O=$!; sleep 1
+              DISPLAY=:7 timeout 60 python3 klavye_t.py $surum-$e >> /tmp/olcum.txt 2>&1 || echo "$surum $e hata" >> /tmp/olcum.txt
+              kill $O $X; sleep 1
+            done
           done
-          cat /tmp/olcum.txt
+          for kip in eski yeni; do
+            Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & X=$!; sleep 2
+            DISPLAY=:7 timeout 90 dbus-run-session -- sh -c '/usr/libexec/at-spi-bus-launcher --launch-immediately & sleep 2; dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.freedesktop.DBus.Properties.Set string:org.a11y.Status string:IsEnabled variant:boolean:true >/dev/null 2>&1; sleep 1; python3 klavye_t.py atspi-'$kip' '$kip >> /tmp/olcum.txt 2>&1 || echo "atspi $kip hata" >> /tmp/olcum.txt
+            kill $X; sleep 1
+          done
+          grep -v XDG_RUNTIME /tmp/olcum.txt
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum

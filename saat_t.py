@@ -3,14 +3,22 @@ sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore import QTimer
-app = QApplication(sys.argv); tk.install_turkish(app) if hasattr(tk, 'install_turkish') else None
-m = QWidget(); m.setStyleSheet('background:#101d33;'); m.setGeometry(0, 0, 1000, 620); m.show()
+from PyQt5.QtGui import QPixmap
+app = QApplication(sys.argv)
+m = QWidget(); m.setStyleSheet('background:#101d33;'); m.setGeometry(0, 0, 1000, 420); m.show()
 ws = []
-for i, (w, h, t) in enumerate(((300, 420, (10, 10, 36)), (260, 360, (9, 22, 5)), (300, 110, (9, 22, 5)), (340, 560, (15, 47, 52)))):
-    c = tk.PanelClock(m); c.now = datetime.datetime(2026, 11, 11, *t); c.setGeometry(10 + sum(x.width() + 14 for x in ws), 10, w, h); c.show(); ws.append(c)
+class T:   # ışığın üç anı
+    def __init__(s, f): s.f = f
+for i, f in enumerate((.3, .7, .8, .9)):
+    c = tk.PanelClock(m); c.now = datetime.datetime(2026, 11, 11, 10, 0, 33); c.setGeometry(10 + i*245, 10, 240, 400); c.show(); ws.append((c, f))
 def bitir():
-    c = ws[0]; t0 = time.perf_counter()
-    for _ in range(50): c.repaint()
-    print('SAAT çizim ortalaması %.2f ms (kadran saklı)' % ((time.perf_counter() - t0)*1000/50))
+    gercek = time.time
+    for c, f in ws:
+        tk.time.time = lambda f=f: 1200.0*6 + f*6.0
+        c.repaint()
+    tk.time.time = gercek
+    c = ws[0][0]; t0 = time.perf_counter()
+    for _ in range(50): c.repaint(c._logo_r)
+    print('IŞIK karesi ortalaması %.2f ms (yalnız logo bölgesi)' % ((time.perf_counter() - t0)*1000/50))
     subprocess.run(['import', '-window', 'root', '/tmp/onizleme/saat.png']); app.quit()
 QTimer.singleShot(1500, bitir); app.exec_()

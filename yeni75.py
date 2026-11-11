@@ -13999,8 +13999,37 @@ class PanelClock(QWidget):
     ortada silik okul logosu, turuncu saniye), altında dijital saat ve tarih. Yer dar ise (eski küçük panel) yalnız dijital saat ve tarih.
     Kadran (logo, çizgiler, rakamlar) bir kez çizilip saklanır; her saniye yalnız ibreler ve yazı."""
     def __init__(self, parent=None):
-        super().__init__(parent); self.setMinimumHeight(110); self.now = None; self._kadran = None
-        self.timer = QTimer(self); self.timer.timeout.connect(self.update); self.timer.start(1000)
+        super().__init__(parent); self.setMinimumHeight(110); self.now = None; self._kadran = None; self._isik = None; self._logo_r = None; self._son_sn = None
+        self.timer = QTimer(self); self.timer.timeout.connect(self.tik); self.timer.start(50)
+    ISIK_DONGU, ISIK_BAS = 6.0, .55   # K-455: web panelindeki gibi logonun üstünden 6 sn'de bir geçen ışık (döngünün son %45'i)
+    def tik(self):
+        """Saniye değişince bütün saat; ışık geçerken yalnız logo bölgesi (yazarken ışık beklemede: kalem akıcılığı)."""
+        import datetime
+        sn = (self.now or datetime.datetime.now()).second
+        if sn != self._son_sn: self._son_sn = sn; self.update(); return
+        f = (time.time() % self.ISIK_DONGU)/self.ISIK_DONGU
+        if f >= self.ISIK_BAS - .02 and self._logo_r is not None and self.isVisible():
+            try:
+                b_ = getattr(self.window(), 'board', None)
+                if b_ is not None and getattr(b_, 'active', None) is not None: return
+            except Exception: pass
+            self.update(self._logo_r)
+    def isik_logo(self, D):
+        """Logonun parlak kopyası (açık yerleri parlar): ışık bandı yalnız logonun üstünde görünür. Bir kez hazırlanır."""
+        k_ = self._isik
+        if k_ is not None and k_[0] == D: return k_[1]
+        from PyQt5.QtGui import QImage
+        n = max(8, int(D*.6)); pm = None
+        try:
+            lg = QPixmap(LOGO_RESMI) if os.path.isfile(LOGO_RESMI) else QPixmap()
+            if not lg.isNull():
+                im = lg.toImage().scaled(n, n, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_ARGB32)
+                g = im.convertToFormat(QImage.Format_Grayscale8)
+                t_ = QImage(n, n, QImage.Format_ARGB32); t_.fill(QColor('#e6fdff')); t_.setAlphaChannel(g)
+                q = QPainter(t_); q.setCompositionMode(QPainter.CompositionMode_DestinationIn); q.drawImage(0, 0, im); q.end()   # logonun dışı saydam kalsın
+                pm = QPixmap.fromImage(t_)
+        except Exception as x: print('saat ışığı:', x)
+        self._isik = (D, pm); return pm
     def kadran(self, D):
         k_ = self._kadran
         if k_ is not None and k_[0] == D: return k_[1]
@@ -14047,6 +14076,20 @@ class PanelClock(QWidget):
             p.end(); return
         x0 = (W - D)/2.0; y0 = 12.0; p.drawPixmap(QPointF(x0, y0), self.kadran(D))
         u = D/100.0; h_, m_, s_ = now.hour, now.minute, now.second
+        self._logo_r = QRectF(x0 + 19*u, y0 + 19*u, 62*u, 62*u).toAlignedRect()
+        f_ = (time.time() % self.ISIK_DONGU)/self.ISIK_DONGU; il = self.isik_logo(D)
+        if f_ >= self.ISIK_BAS and il is not None and not il.isNull():   # ışık bandı soldan sağa geçer (eğik, kenarları yumuşak)
+            from PyQt5.QtGui import QPainterPath as _PP
+            g_ = (f_ - self.ISIK_BAS)/(1 - self.ISIK_BAS); bx = -10 + 105*g_
+            p.save(); p.translate(x0, y0); p.scale(u, u)
+            daire = _PP(); daire.addEllipse(QPointF(50, 50), 30, 30)
+            for gen, op in ((22, .16), (14, .2), (7, .28)):   # dış kenardan içe: yumuşak geçiş (toplam ~.65)
+                bant = _PP(); sk = math.tan(math.radians(18))
+                cx = bx + 11; y1, y2 = 10.0, 90.0
+                bant.moveTo(cx - gen/2 - sk*(y1 - 50)*-1, y1); bant.lineTo(cx + gen/2 - sk*(y1 - 50)*-1, y1)
+                bant.lineTo(cx + gen/2 - sk*(y2 - 50)*-1, y2); bant.lineTo(cx - gen/2 - sk*(y2 - 50)*-1, y2); bant.closeSubpath()
+                p.save(); p.setClipPath(daire.intersected(bant)); p.setOpacity(op); p.drawPixmap(QRectF(20, 20, 60, 60), il, QRectF(il.rect())); p.restore()
+            p.restore()
         from PyQt5.QtGui import QPolygonF as _Pg
         def ibre(aci, pts, renk, kenar):
             p.save(); p.translate(x0 + 50*u, y0 + 50*u); p.rotate(aci); p.scale(u, u)

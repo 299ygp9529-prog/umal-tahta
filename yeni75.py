@@ -1183,7 +1183,7 @@ def sistem_klavyesini_gizle():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         for kip in ('--classname', '--class'):   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
-            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(?i)(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
         import re as _re

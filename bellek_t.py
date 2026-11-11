@@ -4,7 +4,7 @@ import tahta_kalem as tk
 from PyQt5.QtWidgets import QApplication, QDialog, QWidget
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QImage
-app = QApplication(sys.argv)
+app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
 print('sayfa önbelleği sınırı MB', tk.SAYFA_OB_SINIR//1024//1024, 'bellek kB', tk._bellek_kb())
 tk._pencere_temizligi()
 class D(tk.OgrenciAraDialog if False else QDialog): pass

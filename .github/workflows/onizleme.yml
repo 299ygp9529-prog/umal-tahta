@@ -37,13 +37,13 @@ jobs:
           PY
           grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
           mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
-      - name: Sistem klavyesi 2
+      - name: Bellek ve klavye
         run: |
           mkdir -p /tmp/onizleme; cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
-          DISPLAY=:7 timeout 60 python3 sk2_t.py 2>&1 | grep -v XDG > /tmp/olcum.txt || echo hata >> /tmp/olcum.txt
-          DISPLAY=:7 timeout 60 python3 yerim_konum_t.py 2>&1 | grep -v XDG >> /tmp/olcum.txt || echo hata2 >> /tmp/olcum.txt
+          DISPLAY=:7 timeout 90 python3 bellek_t.py 2>&1 | grep -v XDG > /tmp/olcum.txt || echo hata >> /tmp/olcum.txt
+          DISPLAY=:7 timeout 60 python3 kar_t.py 2>&1 | grep -v XDG >> /tmp/olcum.txt || echo hata2 >> /tmp/olcum.txt
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

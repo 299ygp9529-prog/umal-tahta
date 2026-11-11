@@ -1182,6 +1182,9 @@ def sistem_klavyesini_gizle():
         for kip in ('--classname', '--class', '--name'):
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
+        for kip in ('--classname', '--class'):   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(?i)(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
         # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
         import re as _re
         if time.time() - _SK_PID[0] > 30:
@@ -1192,7 +1195,7 @@ def sistem_klavyesini_gizle():
                     try:
                         with open('/proc/%s/cmdline' % d_, 'rb') as f_: c_ = f_.read(400).replace(b'\0', b' ').decode('utf-8', 'replace').lower()
                     except OSError: continue
-                    if _re.search(r'(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus[^ ]*(keyboard|klavye))', c_): pid_.append(d_)
+                    if int(d_) != os.getpid() and _re.search(r'(keyboard|klavye|onboard|florence|squeekboard)', c_.split(' ')[0] + ' ' + ' '.join(c_.split(' ')[1:3])): pid_.append(d_)
             except OSError: pass
             _SK_PID[:] = [time.time(), pid_]
         for pd_ in _SK_PID[1]:
@@ -1203,6 +1206,9 @@ def sistem_klavyesini_gizle():
             try:
                 if int(subprocess.run(['xdotool', 'getwindowpid', i], capture_output=True, text=True, timeout=2).stdout.strip() or 0) == ben: continue
                 subprocess.run(['xdotool', 'windowunmap', i], capture_output=True, timeout=2); print('sistem klavyesi gizlendi', i)
+            except Exception: pass
+        if ids and shutil.which('dbus-send'):   # K-461: ETA klavyesinin kendi 'gizle' çağrısı (varsa; yoksa etkisiz)
+            try: subprocess.run(['dbus-send', '--session', '--type=method_call', '--dest=org.eta.virtualkeyboard', '/VirtualKeyboard', 'org.eta.virtualkeyboard.hide'], capture_output=True, timeout=2)
             except Exception: pass
     _SK_IS[0] = threading.Thread(target=calis, daemon=True); _SK_IS[0].start()
 
@@ -1579,7 +1585,7 @@ def sistem_olcum():
         with open('/proc/meminfo') as f:
             for l in f:
                 k, v = l.split(':', 1); mi[k] = int(v.split()[0])
-        out.update(bellek_mb=round(mi.get('MemTotal', 0)/1024), bos_mb=round(mi.get('MemAvailable', 0)/1024), takas_mb=round((mi.get('SwapTotal', 0) - mi.get('SwapFree', 0))/1024))
+        out.update(atlas_mb=round(_bellek_kb()[2]/1024), bellek_bosaltma=_BELLEK_SON[1], bellek_mb=round(mi.get('MemTotal', 0)/1024), bos_mb=round(mi.get('MemAvailable', 0)/1024), takas_mb=round((mi.get('SwapTotal', 0) - mi.get('SwapFree', 0))/1024))
     except (OSError, ValueError): pass
     try:
         with open('/proc/loadavg') as f: out['yuk'] = float(f.read().split()[0])
@@ -2559,7 +2565,7 @@ class Board(QWidget):
         if oc_ is None or oc_[0] != fp_:   # K-456: çizginin çokgeni / yolu bir kez hesaplanır (her ekran çiziminde Python'da baştan değil)
             ol_ = nib_outline(s)
             oc_ = (fp_, QPolygonF([QPointF(*pt) for pt in ol_]) if ol_ else None, None if ol_ or len(pts) < 2 else stroke_path(pts))
-            if len(_CIZIM_ONB) > 40000: _CIZIM_ONB.clear()
+            if len(_CIZIM_ONB) > 6000: _CIZIM_ONB.clear()   # K-461: silinmiş çizgilerin kaydı birikmesin
             _CIZIM_ONB[id(s)] = oc_
         if oc_[1] is not None:
             p.setPen(Qt.NoPen); p.setBrush(QColor(s['color']))
@@ -3532,12 +3538,54 @@ def page_number_dialog(parent, count, current):
     return int(value[0]) if dialog.exec_()==QDialog.Accepted and value[0] else None
 
 SAYFA_OB = {}; SAYFA_OB_SINIR = 256*1024*1024   # K-440: çizilmiş sayfa görüntüleri (en çok ~256 MB; en eski atılır)
+def _bellek_kb():
+    """(toplam, boş, Atlas'ın kullandığı) kB; okunamazsa 0."""
+    t = b = r = 0
+    try:
+        with open('/proc/meminfo') as f:
+            for l in f:
+                if l.startswith('MemTotal:'): t = int(l.split()[1])
+                elif l.startswith('MemAvailable:'): b = int(l.split()[1]); break
+        with open('/proc/self/statm') as f: r = int(f.read().split()[1])*4
+    except (OSError, ValueError, IndexError): pass
+    return t, b, r
+try:   # K-461: sayfa önbelleği tahtanın belleğine göre (toplam belleğin 1/24'ü; 48–256 MB)
+    _t = _bellek_kb()[0]
+    if _t: SAYFA_OB_SINIR = int(max(48, min(256, _t/1024/24))*1024*1024)
+except Exception: pass
+def bellek_bosalt(neden=''):
+    """K-461: yeniden üretilebilen her şey bırakılır (sayfa görüntüleri, çizgi çokgenleri, açılmış fotoğraflar, Qt resim önbelleği) ve
+    boşalan bellek sisteme geri verilir. Hiçbir yazı / kayıt silinmez; gereken şey ilk kullanımda yeniden hazırlanır."""
+    try:
+        SAYFA_OB.clear(); _CIZIM_ONB.clear(); _PHOTOS['pix'].clear()
+        from PyQt5.QtGui import QPixmapCache; QPixmapCache.clear()
+        import gc; gc.collect()
+        import ctypes, ctypes.util
+        ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6').malloc_trim(0)
+        print('bellek boşaltıldı:', neden)
+    except Exception as e: print('bellek boşalt:', e)
+_BELLEK_SON = [0.0, 0]
+def bellek_bekcisi(window):
+    """K-461: 20 sn'de bir: tahtanın boş belleği azaldıysa (< 400 MB ya da toplamın %12'si) ya da Atlas çok büyüdüyse (> 900 MB ya da toplamın %35'i)
+    önbellekler boşaltılır. Yazarken beklenir; en sık 2 dakikada bir."""
+    try:
+        if getattr(window.board, 'active', None) is not None or time.time() - _BELLEK_SON[0] < 120: return
+        t, b, r = _bellek_kb()
+        if not t: return
+        dar = b and b < max(400*1024, t*.12); buyuk = r > min(900*1024, t*.35)
+        if dar or buyuk:
+            _BELLEK_SON[0] = time.time(); _BELLEK_SON[1] += 1
+            for ad in ('exam_screen', 'karargah'):
+                w_ = getattr(window, ad, None)
+                if w_ is not None and hasattr(w_, '_sm_cache') and not w_.isVisible(): w_._sm_cache = None
+            bellek_bosalt('boş %d MB · Atlas %d MB' % (b//1024, r//1024))
+    except Exception as e: print('bellek bekçisi:', e)
 class Window(QMainWindow):
     @property
     def doc(self): return self.__dict__.get('_doc')
     @doc.setter
     def doc(self, d):   # K-440: belge değişti → sayfa önbelleği, yeni belge kaydedilip adı belli olana kadar kullanılmaz
-        self.__dict__['_doc'] = d; self.__dict__['_sayfa_ob_gecerli'] = False
+        self.__dict__['_doc'] = d; self.__dict__['_sayfa_ob_gecerli'] = False; _CIZIM_ONB.clear()   # K-461: eski belgenin çizgi çokgenleri bırakılır
     def sayfa_gorseli(self, page, scale, clip):
         """K-440: sayfanın çizilmiş görüntüsü. Aynı belge + sayfa + ölçek daha önce çizildiyse bellekten gelir (geri dönülen sayfa,
         aynı yakınlaştırma, geri açılan sekme beklemez). Anahtar oturum belgesinin adıdır: belge her değiştiğinde yeni ad alır."""
@@ -5901,6 +5949,7 @@ class Window(QMainWindow):
         if yeni != AYRILAN:
             AYRILAN.clear(); AYRILAN.update(yeni)
             for no in yeni: _PHOTOS['pix'].pop(no, None)
+            _PHOTOS['surum'] = _PHOTOS.get('surum', 0) + 1   # K-460: oturma planı yeni fotoğrafla yeniden çizilsin
             self.update()
     def anket_sayim(self):
         """Kontenjanlı sorular: okul genelindeki seçim sayıları (DersMap, dakikada bir)."""
@@ -9118,6 +9167,23 @@ def ara_html(rs, photo=None):
     return ''.join(rows)
 
 _BELLEK = [0]
+def _pencere_temizligi():
+    """K-461: açılıp kapanan her pencere (anket, ayarlar, mesaj, şifre…) kapandıktan sonra bellekten silinir; eskiden uygulama kapanana dek kalıyordu."""
+    if getattr(QDialog, '_umal_exec', None) is not None: return
+    orj = QDialog.exec_
+    def exec_(self, *a, **k):
+        try: return orj(self, *a, **k)
+        finally:
+            try: QTimer.singleShot(3000, lambda d_=self: _sil(d_))
+            except Exception: pass
+    def _sil(d_):
+        try:
+            try: from PyQt5 import sip
+            except ImportError: import sip
+            if not sip.isdeleted(d_) and not d_.isVisible(): d_.deleteLater()
+        except Exception: pass
+    try: QDialog._umal_exec = orj; QDialog.exec_ = exec_
+    except Exception as e: print('pencere temizliği:', e)
 def bellek_topla(her=6):
     """K-459: öğrenciler yerine baktıkça (arama, salon planı) açılan pencereler silinir; her 6 bakışta bir boşalan bellek sisteme geri verilir."""
     _BELLEK[0] += 1
@@ -10148,7 +10214,7 @@ def _draw_seatmap_onbellek(self, p, W, H, k, font, plan, theme, accent, head):
     try:
         lst = hash(repr(plan.get('liste')))
         key = (int(W), int(H), round(k, 4), plan.get('sinif'), plan.get('tur'), plan.get('ev'), plan.get('baslik'), len(str(plan.get('saat') or '')), plan.get('hb_per'),
-               lst, tuple(sorted(getattr(self, 'absent', None) or ())), theme, accent, head, BOARD_PHOTOS, len(_PHOTOS.get('data') or {}), len(_PHOTOS.get('pix') or {}), len(AYRILAN))
+               lst, tuple(sorted(getattr(self, 'absent', None) or ())), theme, accent, head, BOARD_PHOTOS, id(_PHOTOS.get('data')), _PHOTOS.get('surum', 0), len(AYRILAN))   # K-460: açılmış fotoğraf sayısı anahtarda değil (her öğrenci aramasında plan 3–4 sn baştan çiziliyordu)
     except Exception: key = None
     c = getattr(self, '_sm_cache', None)
     if key is None or c is None or c[0] != key:
@@ -16829,12 +16895,14 @@ def main():
         QMessageBox.information(None,PRODUCT,'Uygulama zaten açık. Görev çubuğundaki pencereye dönün; serbest kalem için Ekrana yaz düğmesini kullanın.');return
     app.umal_lock = lock   # yeniden başlatmada bırakılır
     window = Window(); window.show()
+    _pencere_temizligi()
     app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
     def _sk_tik():   # K-459: Atlas öndeyken Pardus ekran klavyesi hiç görünmesin (yazı alanı olmayan ekranlarda da açılıyordu); yazarken bekler
         try:
             if QApplication.applicationState() == Qt.ApplicationActive and getattr(window.board, 'active', None) is None: sistem_klavyesini_gizle()
         except Exception: pass
-    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(2000)
+    window._bellek_zaman = QTimer(window); window._bellek_zaman.timeout.connect(lambda: bellek_bekcisi(window)); window._bellek_zaman.start(20000)   # K-461
+    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(700)   # K-461: 2 sn → 0,7 sn
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

@@ -1170,6 +1170,7 @@ def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 
 SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
 _SK_IS = [None]
+_SK_PID = [0, []]
 def sistem_klavyesini_gizle():
     """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
     yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
@@ -1180,6 +1181,22 @@ def sistem_klavyesini_gizle():
         ids = set()
         for kip in ('--classname', '--class', '--name'):
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
+        # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
+        import re as _re
+        if time.time() - _SK_PID[0] > 30:
+            pid_ = []
+            try:
+                for d_ in os.listdir('/proc'):
+                    if not d_.isdigit(): continue
+                    try:
+                        with open('/proc/%s/cmdline' % d_, 'rb') as f_: c_ = f_.read(400).replace(b'\0', b' ').decode('utf-8', 'replace').lower()
+                    except OSError: continue
+                    if _re.search(r'(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus[^ ]*(keyboard|klavye))', c_): pid_.append(d_)
+            except OSError: pass
+            _SK_PID[:] = [time.time(), pid_]
+        for pd_ in _SK_PID[1]:
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', pd_], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         ben = os.getpid()
         for i in ids:
@@ -5633,7 +5650,7 @@ class Window(QMainWindow):
         out.sort(key=lambda x: (x[1][0][0] if x[1] else (datetime.date.max, 0), x[0].get('ad', '')))
         return out[:6]
     def open_ara(self):
-        self.board.finish(); OgrenciAraDialog(self).exec_()
+        self.board.finish(); OgrenciAraDialog(self).exec_(); bellek_topla()
     def open_deneme(self):
         self.board.finish(); DenemeDialog(self).exec_()
     def seat_plan(self, st):
@@ -7998,6 +8015,8 @@ def student_photo(no):
     if pm is None and no in d:
         import base64
         pm = QPixmap(); pm.loadFromData(base64.b64decode(d[no]), 'JPG'); _PHOTOS['pix'][no] = pm
+        if len(_PHOTOS['pix']) > 400:   # K-459: bellekte en çok 400 fotoğraf (en eski açılanlar atılır; gerekince yeniden açılır)
+            for k_ in list(_PHOTOS['pix'])[:100]: _PHOTOS['pix'].pop(k_, None)
     return pm
 BOARD_PHOTOS = True   # tahtalarda öğrenci fotoğrafları
 FOTO_GIZLI = {'101'}   # fotoğrafı hiçbir yerde gösterilmeyecek öğrenciler (okul no); yerine baş harfler
@@ -8278,7 +8297,7 @@ class ExamScreen(QWidget):
         for pl in (self.main.kelebek or {}).get('planlar', []):
             if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders: lst = (pl.get('salonlar') or {}).get(salon); break
         if not lst: return
-        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_()
+        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_(); bellek_topla()
     def mouseReleaseEvent(self, e):
         self.press_timer.stop(); self.press_seat = None; e.accept()
     def start_fx(self, dur):
@@ -9098,11 +9117,24 @@ def ara_html(rs, photo=None):
                     '<span style="color:#9fb3cc;font-size:18px">&nbsp;&nbsp;%s · %s</span><br>%s</div>' % (esc(r.get('ad', '')), esc(r.get('sinif', '')), esc(r.get('no', '')), '&nbsp;&nbsp;'.join(ch)))
     return ''.join(rows)
 
+_BELLEK = [0]
+def bellek_topla(her=6):
+    """K-459: öğrenciler yerine baktıkça (arama, salon planı) açılan pencereler silinir; her 6 bakışta bir boşalan bellek sisteme geri verilir."""
+    _BELLEK[0] += 1
+    if _BELLEK[0] % her: return
+    try:
+        import gc; gc.collect()
+        from PyQt5.QtGui import QPixmapCache; QPixmapCache.clear()
+        import ctypes, ctypes.util
+        ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6').malloc_trim(0)
+    except Exception as e: print('bellek:', e)
+
 class OgrenciAraDialog(QDialog):
     """Herhangi bir tahtada: öğrenci adını ya da numarasını yazar, bugünün ve sonraki sınavlarda salonunu ve sırasını görür.
     Klavye hemen açık; 1 dakika dokunulmazsa kendiliğinden kapanır."""
     def __init__(self, main):
         super().__init__(main); self.main = main; self.setWindowTitle(NEON_ARA_TEXT); self.setMinimumWidth(fit_w(1100))
+        self.setAttribute(Qt.WA_DeleteOnClose)   # K-459: kapanınca bellekte kalmasın (her bakışta yeni pencere birikiyordu)
         self.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;font-size:20px;background:transparent;} QLineEdit{font-size:30px;padding:12px 16px;border:2px solid #2f6fd6;border-radius:12px;}'
                            'QPushButton{background:#1d3150;color:white;border:1px solid #2a4468;border-radius:10px;padding:10px 16px;font-size:19px;font-weight:600;}')
         v = QVBoxLayout(self); v.setSpacing(12); v.setContentsMargins(26, 20, 26, 20)
@@ -9340,6 +9372,7 @@ class YerimDialog(QDialog):
     Dokununca ya da 30 sn sonra kapanır."""
     def __init__(self, main, plan, ders, day, sira):
         super().__init__(main); self.plan = plan; self.ders = ders; self.day = day; self.sira = sira; self.seat_rects = {}; self.absent = set()
+        self.setAttribute(Qt.WA_DeleteOnClose)   # K-459: salon resmi (~8 MB) her bakışta birikiyordu
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
         # K-458: pencerenin değil ekranın tamamı (tahta tam ekranda değilken üst çubuk kadar aşağı kayıp alt şerit çerçevenin altında kalıyordu)
         try: g = (main.screen() if hasattr(main, 'screen') and main.screen() else QApplication.primaryScreen()).geometry()
@@ -16797,6 +16830,11 @@ def main():
     app.umal_lock = lock   # yeniden başlatmada bırakılır
     window = Window(); window.show()
     app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
+    def _sk_tik():   # K-459: Atlas öndeyken Pardus ekran klavyesi hiç görünmesin (yazı alanı olmayan ekranlarda da açılıyordu); yazarken bekler
+        try:
+            if QApplication.applicationState() == Qt.ApplicationActive and getattr(window.board, 'active', None) is None: sistem_klavyesini_gizle()
+        except Exception: pass
+    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(2000)
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

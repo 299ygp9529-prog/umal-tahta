@@ -8160,7 +8160,41 @@ class ExamScreen(QWidget):
             self.press_seat = self.seat_at(e.pos())
             if self.press_seat is not None:
                 no_ = self.press_seat; self.long_press(); self.fx_seat = no_; self.fx_t0 = time.monotonic(); self.fx_kind = 'tap'; self.start_fx(.6)
+        else:
+            try: self.yerim_sor(e.pos())
+            except Exception as x: print('yerim sor:', x)
         e.accept()
+    def yerim_sor(self, pos):
+        """K-448: öğrenci kartına (fotoğrafına) dokununca altında 'Yerimi bul' çıkar; ona dokununca sıradaki sınavının salonu açılır, sırası yanıp söner."""
+        b = getattr(self, 'yerim_btn', None)
+        if b is None:
+            b = self.yerim_btn = QPushButton(self); b.setFocusPolicy(Qt.NoFocus); b.hide(); b.clicked.connect(self.yerim_ac)
+            b.setStyleSheet('QPushButton{background:#22e8ff;color:#04202a;border:3px solid #e9fdff;border-radius:16px;padding:10px 22px;font-size:24px;font-weight:800;}'
+                            'QPushButton:pressed{background:#7ff6ff;}')
+            self.yerim_t = QTimer(self); self.yerim_t.setSingleShot(True); self.yerim_t.timeout.connect(b.hide)
+        b.hide(); self.yerim_bilgi = None
+        sira = self.seat_at(pos); plan = getattr(self, 'son_plan', None)
+        if sira is None or not plan: return
+        r = next((x for x in plan.get('liste', []) if x.get('sira') == sira), None)
+        no = str((r or {}).get('no', '')).strip()
+        if not no: return
+        rs = [x for x in self.main.ogrenci_ara(no) if str(x[0].get('no', '')) == no and x[1]]
+        if not rs: return
+        (day, _), lab, now_, ders, salon, sira_, crs = rs[0][1][0]
+        self.yerim_bilgi = (day, ders, salon, sira_)
+        b.setText('Yerimi bul  ·  %s  ›\nSalon %s · Sıra %s' % (tr_name(r.get('ad', '')), salon, sira_)); b.adjustSize()
+        c = self.seat_rects[sira]; x = int(min(max(8, c.center().x() - b.width()/2), self.width() - b.width() - 8))
+        y = int(c.bottom() + 6) if c.bottom() + 6 + b.height() < self.height() - 8 else int(c.top() - b.height() - 6)
+        b.move(x, max(8, y)); b.show(); b.raise_(); self.yerim_t.start(8000)
+        self.fx_seat = sira; self.fx_t0 = time.monotonic(); self.fx_kind = 'yerim'; self.start_fx(.6)
+    def yerim_ac(self):
+        self.yerim_btn.hide(); bilgi = getattr(self, 'yerim_bilgi', None)
+        if not bilgi: return
+        day, ders, salon, sira = bilgi; lst = None
+        for pl in (self.main.kelebek or {}).get('planlar', []):
+            if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders: lst = (pl.get('salonlar') or {}).get(salon); break
+        if not lst: return
+        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_()
     def mouseReleaseEvent(self, e):
         self.press_timer.stop(); self.press_seat = None; e.accept()
     def start_fx(self, dur):
@@ -8170,8 +8204,8 @@ class ExamScreen(QWidget):
     def draw_fx(self, p, k):
         """Dokunuş: sıranın çevresinde genişleyen kırmızı dalga; onay: kartlar sırayla yeşil parlar."""
         t = time.monotonic() - getattr(self, 'fx_t0', -99)
-        if getattr(self, 'fx_kind', '') == 'tap' and t < .6 and getattr(self, 'fx_seat', None) in self.seat_rects:
-            r = self.seat_rects[self.fx_seat]; g = t/.6; q = QColor(255, 77, 94, int(220*(1 - g)))
+        if getattr(self, 'fx_kind', '') in ('tap', 'yerim') and t < .6 and getattr(self, 'fx_seat', None) in self.seat_rects:
+            r = self.seat_rects[self.fx_seat]; g = t/.6; q = QColor(255, 77, 94, int(220*(1 - g))) if self.fx_kind == 'tap' else QColor(34, 232, 255, int(220*(1 - g)))
             p.setPen(QPen(q, 4*k)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(r.adjusted(-18*k*g, -18*k*g, 18*k*g, 18*k*g), 12*k, 12*k)
         if getattr(self, 'fx_kind', '') == 'ok' and t < 1.6:
             for i, no in enumerate(sorted(self.seat_rects)):
@@ -8282,13 +8316,14 @@ class ExamScreen(QWidget):
                 own_ = exam_course(day.isoformat(), st['lesson'], plan['sinif'], own) if hasattr(day, 'isoformat') else own
                 when = ('Başlamasına %s' % ms(max(0, left))) if phase == 'before' else ('%s %d %s · %s – %s' % ('Bugün' if day == st.get('today', day) else '', day.day, TR_MONTHS[day.month-1], hm(st['start']), hm(st['end']))).strip()
                 ev['baslik'] = 'Sınav yerleri  ·  %s' % plan['sinif']
-                self.absent = set()
+                self.absent = set(); self.son_plan = ev   # K-448: dokunulan kartın öğrencisi
                 ev['saat'] = ('Başlamasına %s' % ms(max(0, left))) if phase == 'before' else '%s – %s' % (hm(st['start']), hm(st['end']))
                 self.draw_seatmap(p, W, H - 40*k, k, font, ev, theme, accent, '%s  ·  %s  ·  %s' % (st['lesson'], own_, ('Bugün' if day == st.get('today', day) else '%d %s' % (day.day, TR_MONTHS[day.month-1]))))
-                p.end(); return
+                self.draw_fx(p, k); p.end(); return
         seatmap = bool(plan and plan['tur'] == 'salon' and phase in ('before', 'during') and seat_layout(plan))
         yok_on = seatmap and self.main.yok_open(st)
         if yok_on != self.yok_on: self.yok_on = yok_on; QTimer.singleShot(0, self.update_yok_btn)
+        self.son_plan = plan if seatmap else None
         if seatmap:
             self.absent = set(self.main.yok_state(st)['gelmedi'])
             self.draw_seatmap(p, W, H, k, font, dict(plan, saat=('Kalan %s' if phase == 'during' else 'Başlamasına %s') % ms(max(0, left)), hb_per=.6 if phase == 'during' and left <= 300 else 1.0), theme, accent, '%s  ·  %s' % (st['lesson'], own if self.grade in exams else 'Ortak Yazılı Sınav'))
@@ -11313,6 +11348,13 @@ def proje_suresi_doldu(d):
     import datetime
     sg = str((d or {}).get('son_gun') or '')
     return bool(sg) and datetime.date.today().isoformat() > sg
+def proje_gerek(d):
+    """K-432: tercih sayısı her zaman 3 (sınıfta 3'ten az proje dersi varsa o kadar); eksik tercih kabul edilmez."""
+    k_ = (d or {}).get('kont') or {}; n = sum(1 for v in k_.values() if int(v or 0) > 0)
+    return max(1, min(3, n or 3))
+def proje_tamam(d, no):
+    t = ((d or {}).get('tercihler') or {}).get(no)
+    return isinstance(t, list) and len(t) >= proje_gerek(d)
 def proje_dagit(tercihler, kont, seed=None):
     """tercihler {no: [1., 2., 3. ders]}, kont {ders: en çok kişi}. Önce 1. tercihler; bir derse kontenjandan çok
     öğrenci isterse kura (tamamen şans) çekilir, açıkta kalanlar 2. sonra 3. tercihlerine geçer. Döner {no: ders}."""
@@ -11366,7 +11408,7 @@ def proje_report(sinif, roster, d, folder, font_dir):
     bx = W - M - 92; pg.draw_rect(fitz.Rect(bx, 22, W - M, 70), color=(0.13, 0.91, 1.0), fill=None, width=1.6, radius=0.2)
     T(bx + 46, 54, sinif, 22, 'b', (1, 1, 1), center=True)
     # özet satırı
-    n = len(roster); yer = sum(1 for no in ad if no in sonuc); tk = sum(1 for no in ad if no in ter)
+    n = len(roster); yer = sum(1 for no in ad if no in sonuc); tk = sum(1 for no in ad if proje_tamam(d, no))
     y = 118
     chips = [('Sınıf mevcudu', n), ('Tercih yapan', tk), ('Yerleşen', yer), ('Yerleşmeyen', n - yer)]
     cw = (W - 2*M - 3*10)/4
@@ -11518,9 +11560,7 @@ class ProjeOgretmen(QDialog):
         alt = QLabel('Bu sınıfın ayarları; diğer sınıflar kendi ayarlarıyla çalışır.'); alt.setStyleSheet('color:#9fb3cc;font-size:17px;'); v.addWidget(alt)
         # sınıfa özel: tercih sayısı ve son gün
         ay = QHBoxLayout(); ay.setSpacing(8)
-        ay.addWidget(QLabel('Kaç tercih:')); self.adet_b = {}
-        for n_ in (1, 2, 3):
-            b_ = QPushButton(str(n_)); b_.setFixedSize(56, 46); b_.setFocusPolicy(Qt.NoFocus); b_.clicked.connect(lambda c=False, n__=n_: self.adet(n__)); ay.addWidget(b_); self.adet_b[n_] = b_
+        self.adet_b = {}; ay.addWidget(QLabel('Her öğrenci 3 tercih yapar'))   # K-432: tercih sayısı seçilmez
         ay.addSpacing(30); ay.addWidget(QLabel('Son gün:'))
         sg_y = QPushButton('Yok'); sg_y.setFocusPolicy(Qt.NoFocus); sg_y.clicked.connect(lambda: self.son_gun(None)); ay.addWidget(sg_y); self.sg_yok = sg_y
         sg_m = QPushButton('−'); sg_m.setFixedSize(52, 46); sg_m.setFocusPolicy(Qt.NoFocus); sg_m.clicked.connect(lambda: self.son_gun(-1)); ay.addWidget(sg_m)
@@ -11609,7 +11649,7 @@ class ProjeOgretmen(QDialog):
     def dagit(self):
         if self.d.get('durum') == 'dagitildi' and QMessageBox.question(self, 'Proje seçimi', 'Kura yeniden çekilsin mi? Elle yapılan düzeltmeler silinir.') != QMessageBox.Yes: return
         import datetime
-        self.d['sonuc'] = proje_dagit(self.d.get('tercihler', {}), self.d.get('kont', {})); self.d['durum'] = 'dagitildi'
+        self.d['sonuc'] = proje_dagit({no: t for no, t in self.d.get('tercihler', {}).items() if proje_tamam(self.d, no)}, self.d.get('kont', {}))   # K-432: yalnız 3 tercihini tamamlayanlar; self.d['durum'] = 'dagitildi'
         self.d['kura_zaman'] = datetime.datetime.now().strftime('%d.%m.%Y %H.%M'); self.save(); self.main.proje_refresh()
     def duzelt(self):
         """Sonucu düzelt: tam ekran liste; her öğrencinin satırına dokununca dersler büyük düğmelerle çıkar (açılır liste yok)."""
@@ -11726,7 +11766,7 @@ class ProjeScreen(QWidget):
             self.main.show_toast('Seçim şu an kapalı.' if d.get('durum') != 'dagitildi' else 'Dağıtım yapıldı; değişiklik için öğretmenine söyle.'); return
         ders = [x for x in proje_dersleri(self.main.proje_sinif()) if int(d.get('kont', {}).get(x) or 0) > 0]
         if not ders: self.main.show_toast('Öğretmen henüz kontenjan belirlemedi.'); return
-        ProjeForm(self.main, no, ad, ders, d.get('kont', {}), d.get('tercihler', {}).get(no), lambda t: self.main.proje_tercih(no, t), adet=int(d.get('tercih_sayisi') or 3)).exec_(); self.update()
+        ProjeForm(self.main, no, ad, ders, d.get('kont', {}), d.get('tercihler', {}).get(no), lambda t: self.main.proje_tercih(no, t), adet=proje_gerek(d)).exec_(); self.update()
     def paintEvent(self, e):
         from PyQt5.QtGui import QFont
         fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
@@ -11743,7 +11783,7 @@ def draw_proje_list(p, W, H, k, font, sinif, ros, d, bottom):
     fT = font(40, True); tw = QFontMetrics(fT).horizontalAdvance(sinif); pill = QRectF(30*k, 18*k, tw + 48*k, 62*k)
     draw_neon(p, pill, sinif, fT, '#22e8ff', k)
     dur = d.get('durum', 'kapali'); ter = d.get('tercihler', {}); sonuc = d.get('sonuc', {})
-    meta = {'kapali': 'Seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if no in ter), len(ros)), 'dagitildi': 'Dağıtım yapıldı · %d/%d yerleşti' % (sum(1 for no, _ in ros if no in sonuc), len(ros))}.get(dur, '')
+    meta = {'kapali': 'Seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if proje_tamam(d, no)), len(ros)), 'dagitildi': 'Dağıtım yapıldı · %d/%d yerleşti' % (sum(1 for no, _ in ros if no in sonuc), len(ros))}.get(dur, '')
     if dur == 'acik' and d.get('son_gun'): meta += (' · süre doldu' if proje_suresi_doldu(d) else ' · son gün ' + proje_gun_yazisi(d['son_gun']))
     fm = font(22, True); mw = QFontMetrics(fm).horizontalAdvance(meta)
     text(QRectF(W - 30*k - mw - 4, 18*k, mw + 4, 62*k), meta, fm, '#ffe14d', Qt.AlignRight | Qt.AlignVCenter)
@@ -11759,7 +11799,7 @@ def draw_proje_list(p, W, H, k, font, sinif, ros, d, bottom):
     rects = {}; fN = font(15, True); fS = font(13, True)
     for i, (no, ad) in enumerate(ros):
         r = QRectF(30*k + (i % cols)*(cw + gap), top + (i//cols)*(ch + gap), cw, ch)
-        dn = (no in sonuc) if dur == 'dagitildi' else (no in ter)
+        dn = (no in sonuc) if dur == 'dagitildi' else proje_tamam(d, no)
         p.setPen(QPen(QColor('#2fbf71'), 3*k) if dn else Qt.NoPen); p.setBrush(QColor(255, 255, 255, 16)); p.drawRoundedRect(r, 12*k, 12*k)
         lines = 2 if dur == 'dagitildi' else 1
         ph_h = r.height() - (22 + 24*lines)*k; ph_w = min(r.width() - 14*k, ph_h*0.78)   # vesikalık oranı korunur (yüz kesilmez)
@@ -13532,7 +13572,7 @@ class RehberlikMenu(QDialog):
         try: rh = (not room) and bool(main.anket_active('rehberlik'))
         except Exception: rh = False
         d = main.proje_data(); ros = main.proje_roster(); ter = d.get('tercihler', {})
-        dur = {'kapali': 'seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if no in ter), len(ros)), 'dagitildi': 'dağıtım yapıldı'}.get(d.get('durum', 'kapali'), '')
+        dur = {'kapali': 'seçim kapalı', 'acik': '%d/%d tercih yaptı' % (sum(1 for no, _ in ros if proje_tamam(d, no)), len(ros)), 'dagitildi': 'dağıtım yapıldı'}.get(d.get('durum', 'kapali'), '')
         if d.get('son_gun') and d.get('durum') == 'acik': dur += ' · son gün ' + proje_gun_yazisi(d['son_gun'])
         h = QHBoxLayout(); h.setSpacing(16)
         b1 = QPushButton('  Proje ödevi tercihi\n  ' + (dur if ros else 'öğrenci listesi bekleniyor') + ('  (tanıtım)' if main.proje_demo() else ''))

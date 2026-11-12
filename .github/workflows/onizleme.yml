@@ -43,9 +43,8 @@ jobs:
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
           : > /tmp/olcum.txt
-          for v in eski93 yeni75; do cp $v.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; echo "== $v" >> /tmp/olcum.txt; DISPLAY=:7 timeout 100 python3 -u yerim_olc_t.py > /tmp/c.txt 2>&1 || echo "HATA" >> /tmp/olcum.txt; (grep -v XDG /tmp/c.txt || true) | tail -7 >> /tmp/olcum.txt; done
+          for v in yeni75; do cp $v.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; echo "== $v" >> /tmp/olcum.txt; DISPLAY=:7 timeout 120 python3 -u yerim_olc_t.py > /tmp/c.txt 2>&1 || echo "HATA" >> /tmp/olcum.txt; (grep -v XDG /tmp/c.txt || true) | tail -7 >> /tmp/olcum.txt; done
           DISPLAY=:7 timeout 100 python3 -u yerim_tani_t.py > /tmp/c.txt 2>&1 || echo "HATA" >> /tmp/olcum.txt; (grep -v XDG /tmp/c.txt || true) | grep "bölgeleri\|alttaki\|boşta" | cut -c1-420 >> /tmp/olcum.txt
-          DISPLAY=:7 import -window root /tmp/onizleme/sinav-yerleri.png || true
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

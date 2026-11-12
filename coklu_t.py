@@ -8,12 +8,23 @@ app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
 w = tk.Window(); w.showFullScreen(); app.processEvents()
 dev = QTouchDevice(); dev.setType(QTouchDevice.TouchScreen); dev.setCapabilities(QTouchDevice.Position | QTouchDevice.Area)
 durum = {}   # id → (x, y)
+class TP:
+    def __init__(s, i, x, y, st, b): s.i = i; s.p = QPointF(x, y); s.sp = QPointF(b.mapToGlobal(QPointF(x, y).toPoint())); s.st = st
+    def id(s): return s.i
+    def state(s): return s.st
+    def pos(s): return s.p
+    def screenPos(s): return s.sp
+    def ellipseDiameters(s): return QSizeF(8, 8)
+class EV:
+    def __init__(s, t, tps): s.t = t; s.tps = tps
+    def type(s): return s.t
+    def touchPoints(s): return s.tps
+    def timestamp(s): return 0
+    def accept(s): pass
+    def ignore(s): pass
 def olay(tur, degisen):
-    b = w.board; tps = []; st = 0
-    for i, (x, y) in list(durum.items()):
-        tp = QTouchEvent.TouchPoint(i); tp.setPos(QPointF(x, y)); tp.setScreenPos(QPointF(b.mapToGlobal(QPointF(x, y).toPoint())))
-        s_ = degisen.get(i, Qt.TouchPointStationary); tp.setState(s_); tp.setEllipseDiameters(QSizeF(8, 8)); tps.append(tp); st |= int(s_)
-    e = QTouchEvent(tur, dev, Qt.NoModifier, Qt.TouchPointStates(st), tps); b.event(e)
+    b = w.board; tps = [TP(i, x, y, degisen.get(i, Qt.TouchPointStationary), b) for i, (x, y) in list(durum.items())]
+    b.event(EV(tur, tps)); app.processEvents()
     for i, s_ in degisen.items():
         if s_ == Qt.TouchPointReleased: durum.pop(i, None)
 def kalem(i, x0, y0, n=12, dx=8):

@@ -944,6 +944,7 @@ def legacy_card(clip):
     clip = fitz.Rect(clip); h = min(300, GUNUN_CARD*clip.height/max(clip.width, 1))
     s = min(GUNUN_CARD/max(clip.width, 1), h/max(clip.height, 1)); w = clip.width*s; x0 = 48 + (GUNUN_CARD - w)/2
     return [x0, 36, x0 + w, 36 + clip.height*s]
+SOLUTION_CARD_SHARE_SOL = .92   # K-476: sola yaslanan uzun soruda kartın ekran yüksekliğindeki payı
 SOLUTION_CARD_SHARE = .62   # soru kartı ekranın en çok bu kadarını kaplar; kalanı çözüm için boş kalır
 def fit_card(clip, vw, vh):
     """Çözüm alanı: tahta genişliğe sığar, soru olabildiğince büyük; kart ekran yüksekliğinin
@@ -951,7 +952,13 @@ def fit_card(clip, vw, vh):
     clip = fitz.Rect(clip); zoom = max(.5, (vw - 8)/960); seen = (vh - 8)/zoom
     hmax = max(120, seen*SOLUTION_CARD_SHARE - 52)   # kart çerçevesi: üstte 36, altta 16 birim
     w = GUNUN_CARD; h = w*clip.height/max(clip.width, 1)
-    if h > hmax: h = hmax; w = h*clip.width/max(clip.height, 1)
+    if h > hmax:
+        h = hmax; w = h*clip.width/max(clip.height, 1)
+        # K-476: uzun (dikey) soru: kart sola yaslanır, ekran yüksekliğinin %92'sine kadar büyür (arka sıralar okuyabilsin);
+        # çözüm alanı sağda ve altta kalır. Kart genişliği sayfanın en çok %56'sı.
+        oran = clip.height/max(clip.width, 1); hs = max(120, seen*SOLUTION_CARD_SHARE_SOL - 52); ws = hs/max(oran, 1e-6)
+        if ws > 960*.56 - 64: ws = 960*.56 - 64; hs = ws*oran
+        if ws > w*1.12: return [40, 36, 40 + ws, 36 + hs], zoom
     x0 = 480 - w/2
     return [x0, 36, x0 + w, 36 + h], zoom
 def question_card(src, page_no, page_marks, clip, ink=None, card=None):
@@ -3800,6 +3807,10 @@ class Window(QMainWindow):
         if ks is not None: ks.setVisible(not getattr(self,'_exam_full',False) and getattr(self,'yeni_panel',None) is not None and not self.yeni_panel.isVisible()); ks.yerlestir()
         for o in (getattr(self,'spot',None),getattr(self,'curtain',None),getattr(self,'exam_screen',None)):
             if o is not None: o.fit(vp); o.raise_()
+        sb=getattr(self,'soru_buyut_b',None)
+        if sb is not None:
+            g_=getattr(self,'solution_origin',None) is not None
+            if sb.isVisibleTo(self.nav)!=g_: sb.setVisible(g_)
         self.nav.adjustSize();self.nav.move(vp.x()+10,vp.bottom()-self.nav.height()-10);self.nav.raise_()   # lower left
         fb=getattr(self,'float_bell',None)
         if fb is not None:fb.place();fb.raise_()
@@ -4215,6 +4226,7 @@ class Window(QMainWindow):
         self.button(bottom,'Sayfaya git',self.go_to_page)
         zo=self.button(bottom,'−',lambda:self.set_zoom(self.zoom/1.2))
         self.button(bottom,'Sığdır',self.fit_page)
+        self.soru_buyut_b=QPushButton('🔍 Soruyu büyüt');self.soru_buyut_b.setFocusPolicy(Qt.NoFocus);self.soru_buyut_b.clicked.connect(self.soru_buyut);bottom.addWidget(self.soru_buyut_b);self.soru_buyut_b.hide()   # K-476: yalnız çözüm alanında
         zi=self.button(bottom,'+',lambda:self.set_zoom(self.zoom*1.2))
         for b_,c_,n_ in ((zo,0xe32a,'Küçült'),(zi,0xe3d4,'Büyüt')):
             g_,css_=glyph_style(c_,18);b_.setText(g_);b_.setStyleSheet('QPushButton{%s}'%css_);b_.setToolTip(n_);b_.setAccessibleName(n_)
@@ -4355,6 +4367,7 @@ class Window(QMainWindow):
             page.insert_image(cr,stream=png,keep_proportion=True)
             doc.set_metadata({'title':'Soru ve çözüm — '+APP_NAME,'keywords':'UMAL-solution'})
             self.replace(doc,persist=False);self.solution_origin=origin
+            self.soru_buyut_b.show();QTimer.singleShot(50,self.place_overlays)   # K-476
             self.tabs_changed();self.filename.setText('Soru kartı · Altındaki alana çözümünüzü yazın')
             self.set_tool('pen');self.color=PEN_DEFAULT;self.dirty=True
             if key in origin['solutions']:
@@ -4582,7 +4595,7 @@ class Window(QMainWindow):
         self.marks=origin['marks'];self.page=origin['page'];self.dirty=origin['dirty'] or changed
         self.solutions=solutions
         if changed:self.setWindowTitle(PRODUCT+' • Kaydedilmemiş değişiklikler')
-        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.set_tool('pen');self.set_zoom(origin['zoom'])
+        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.soru_buyut_b.hide();self._soru_buyuk=False;self.set_tool('pen');self.set_zoom(origin['zoom'])
         if base:self.session_pdf_name=origin['pdf'];self.session_pdf_pending=False
         else:self.session_pdf_pending=True
         self.save_session()
@@ -4985,7 +4998,7 @@ class Window(QMainWindow):
         self.history_ctx = None
         self.session_timer.stop()
         self.board.clear_selection()
-        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed()
+        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.soru_buyut_b.hide();self._soru_buyuk=False
         old = self.doc
         sil_ = []; marks = recover_marks(doc, sil_) if tara else {}   # K-438: sekme geri açılırken yazılar durum.json'dan gelir; belge taranmaz
         # K-438: belge diskteki dosyanın aynısıysa (hiçbir şey çıkarılmadı) oturum kopyası arka planda düz dosya kopyasıdır (baştan yazılmaz)
@@ -6799,6 +6812,24 @@ class Window(QMainWindow):
         # Çözüm alanı genişliğe sığar (soru kartı make_solution'da buna göre boyutlanır), en üstten başlar.
         self.set_zoom(getattr(self,'solution_fit',None) or 2.0)
         self.scroll.horizontalScrollBar().setValue(0);self.scroll.verticalScrollBar().setValue(0)
+        self._soru_buyuk=False
+        try: self.soru_buyut_b.setText('🔍 Soruyu büyüt')
+        except Exception: pass
+    def soru_buyut(self):
+        """K-476: çözüm alanında soru kartı tek dokunuşla bütün ekranı kaplar (öğrenciler okusun); yeniden dokununca çözüm düzenine döner.
+        Yalnız yakınlaştırma ve kaydırma değişir; yazılanlar yerinde kalır."""
+        o=getattr(self,'solution_origin',None)
+        if not o or not o.get('card'): return
+        if getattr(self,'_soru_buyuk',False): self.solution_zoom(); return
+        try:
+            cr=fitz.Rect(o['card']);pay=14;vp=self.scroll.viewport();vw=vp.width()-8;vh=vp.height()-8
+            q=self.board.scale/max(self.zoom,1e-6)
+            self.set_zoom(min(vw/((cr.width+2*pay)*q),vh/((cr.height+2*pay)*q),8))
+            k=self.board.scale
+            self.scroll.horizontalScrollBar().setValue(int((cr.x0-pay)*k-(vp.width()-(cr.width+2*pay)*k)/2))
+            self.scroll.verticalScrollBar().setValue(int((cr.y0-pay)*k-(vp.height()-(cr.height+2*pay)*k)/2))
+            self._soru_buyuk=True;self.soru_buyut_b.setText('↩ Çözüme dön')
+        except Exception as e: print('soru büyüt:',e)
     def go_to_page(self):
         target=page_number_dialog(self,len(self.doc),self.page+1)
         if target: self.goto(target-1-self.page)

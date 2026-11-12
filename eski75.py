@@ -2589,6 +2589,7 @@ class Board(QWidget):
     def cacheable(self, active_ok=False):
         o = self.owner
         if getattr(o, 'overlay_mode', False) or self.fading or self.transform or (self.active and not active_ok): return False
+        if getattr(self, '_canlandirma', 0): return False   # K-473: grafik çizim canlandırması sürerken hazır görüntü alınmaz (yarım eğri kalıyordu)
         if o.tool == 'smart' and self.selection_rect() is not None: return False
         d = getattr(o, 'daily', None)
         if d and o.solution_origin is None and any(it['tab'] == o.current_tab() and it['page'] == o.page for it in d['items']): return False
@@ -4192,6 +4193,7 @@ class Window(QMainWindow):
         self.pano_tab.setFixedSize(52, 120); self.pano_tab.setStyleSheet('QPushButton{padding:0;min-height:120px;max-height:120px;font-size:16px;font-weight:bold;}')
         self.pano_tab.clicked.connect(lambda: self.set_pano_hidden(False))
         tab_col = QVBoxLayout(); tab_col.setContentsMargins(0, 0, 0, 0); tab_col.addWidget(self.pano_tab); tab_col.addStretch(); body.addLayout(tab_col)
+        self.atlas_bosluk = QWidget(); self.atlas_bosluk.setFixedWidth(0); body.addWidget(self.atlas_bosluk); self.atlas_bosluk.hide()   # K-474: Atlas paneli kenardayken tahta bu kadar daralır (panel soruyu örtmez)
         self.pano_tab.hide()
         # Page and zoom controls float in the board's lower right corner.
         self.nav=QWidget(self.scroll);self.nav.setObjectName('nav')
@@ -6212,6 +6214,29 @@ class Window(QMainWindow):
         """K-344: Atlas'a sor paneli."""
         if getattr(self, 'atlas_panel', None) is None: self.atlas_panel = AtlasPanel(self)
         self.atlas_panel.ac(resim)
+    def atlas_soruyu_sigdir(self):
+        """K-474: Atlas paneli kenardayken çerçeveye alınan soru, tahtanın kalan alanına sığacak kadar büyütülür ve ortalanır."""
+        try:
+            c = getattr(self, 'atlas_son_cerceve', None); pn = getattr(self, 'atlas_panel', None)
+            if not c or c[0] != self.page or pn is None or not pn.isVisible() or pn.tam or pn.resim is None: return
+            if getattr(self.board, 'active', None) is not None: return   # yazarken dokunma
+            r = c[1]; vp = self.scroll.viewport(); vw = vp.width() - 28; vh = vp.height() - 28
+            if vw < 120 or vh < 120 or r.width() < 4 or r.height() < 4: return
+            q = self.board.scale/max(self.zoom, 1e-6)
+            if getattr(self, '_atlas_onceki', None) is None:
+                self._atlas_onceki = (self.page, self.zoom, self.scroll.horizontalScrollBar().value(), self.scroll.verticalScrollBar().value())
+            self.set_zoom(min(vw/(r.width()*q), vh/(r.height()*q), 6.0))
+            k = self.board.scale
+            self.scroll.horizontalScrollBar().setValue(int(r.x()*k - (vp.width() - r.width()*k)/2))
+            self.scroll.verticalScrollBar().setValue(int(r.y()*k - (vp.height() - r.height()*k)/2))
+        except Exception as e: print('atlas sığdır:', e)
+    def atlas_gorunumu_geri(self):
+        """K-474: Atlas kapanınca tahta, soru büyütülmeden önceki yakınlık ve konuma döner (sayfa değişmediyse)."""
+        o = getattr(self, '_atlas_onceki', None); self._atlas_onceki = None
+        try:
+            if o and o[0] == self.page and getattr(self.board, 'active', None) is None:
+                self.set_zoom(o[1]); self.scroll.horizontalScrollBar().setValue(o[2]); self.scroll.verticalScrollBar().setValue(o[3])
+        except Exception as e: print('atlas geri:', e)
     def atlas_cerceve(self, pts):
         """K-350: paneldeki Atlas düğmesi → çerçeve: seçilen bölüm Atlas'a gider ve hemen çözülür. Boş yere dokunmak: yazarak sorma."""
         self.set_tool('pen'); pn = getattr(self, 'atlas_panel', None)
@@ -6560,7 +6585,15 @@ class Window(QMainWindow):
             self.auto_restart_t0 = time.time(); QTimer.singleShot(30000, self.auto_restart); return
         if drawing or (idle < 10 and time.time() - getattr(self, 'auto_restart_t0', 0) < 600):
             QTimer.singleShot(3000, self.auto_restart); return   # yazarken hiç; dokunulurken en çok 10 dk beklenir
+        if self.arka_planda_ders():   # K-472: öğretmen derste tahtayı bıraktı (küçülttü ya da başka program önde): yeniden açılış dersi bölmez
+            QTimer.singleShot(30000, self.auto_restart); return
         self.restart_app()
+    def arka_planda_ders(self):
+        """K-472: ders saatinde Atlas küçültülmüş ya da başka bir program öndeyse True (Atlas o derste hiçbir şeye karışmaz)."""
+        try:
+            if not self.lesson_key(): return False
+            return bool(self.isMinimized() or QApplication.applicationState() != Qt.ApplicationActive)
+        except Exception: return False
     def restart_app(self):
         """Yeni sürümle yeniden aç: önce her şey kaydedilir, yeni açılış aynı sekme ve sayfadan devam eder."""
         try:
@@ -6570,7 +6603,7 @@ class Window(QMainWindow):
         arka_dosya().bosalt()
         try:
             with open(os.path.join(self.data_dir, 'yeniden-baslat.json'), 'w', encoding='utf-8') as f:
-                json.dump(dict(tam_ekran=self.isFullScreen(), zaman=time.time()), f)
+                json.dump(dict(tam_ekran=self.isFullScreen(), zaman=time.time(), kucuk=bool(self.isMinimized()), karsilama=list(getattr(self, 'welcome_key', None) or [])), f)
         except OSError: pass
         lock = getattr(QApplication.instance(), 'umal_lock', None)
         if lock is not None: lock.unlock()   # yeni açılış "zaten açık" demesin
@@ -6587,7 +6620,10 @@ class Window(QMainWindow):
             with open(path, encoding='utf-8') as f: d = json.load(f)
             os.remove(path)
         except (OSError, ValueError): return
-        if isinstance(d, dict) and (d.get('tam_ekran') or not self.isFullScreen()) and time.time() - d.get('zaman', 0) < 120:
+        taze = isinstance(d, dict) and time.time() - d.get('zaman', 0) < 120
+        if taze and len(d.get('karsilama') or []) == 2: self.welcome_key = tuple(d['karsilama'])   # K-472: bu ders için karşılama yeniden sorulmaz
+        if taze and d.get('kucuk'): self.showMinimized()   # K-472: küçültülmüşken yeniden açıldıysa öne gelmez
+        elif taze and (d.get('tam_ekran') or not self.isFullScreen()):
             self.showFullScreen(); QTimer.singleShot(100, self.fit_page)   # açılış animasyonu yok · K-396: tahta hep tam ekranla döner
         self.statusBar().showMessage('Yeni sürümle açıldı: ' + version_label())
     def elle_yoklama_yaz(self, veri):
@@ -13478,6 +13514,37 @@ def yabanci_yazi_temizle(t):
     t = re.sub(r'[\u0400-\u052F\u0590-\u08FF\u0900-\u0DFF\u0E00-\u0FFF\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+', '', t)
     return re.sub(r'[ \t]{2,}', ' ', t).replace(' :', ':').replace(' ,', ',')
 
+def atlas_soru_kirp(pix, pay=14):
+    """K-474/K-475: seçilen sorunun çevresindeki boş alanı kırpar; soru önizlemede olabildiğince büyük görünür.
+    Zemin tek renk olmayabilir (kareli çözüm alanı): ince, açık renkli kare çizgileri yazı sayılmaz; yazı ve şekil = zeminden belirgin koyu ya da canlı renkli nokta."""
+    try:
+        W, H = pix.width(), pix.height()
+        if W < 40 or H < 40: return pix
+        kw = min(W, 420); im = pix.toImage().scaled(kw, max(1, int(H*kw/W)), Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB32)
+        w, h = im.width(), im.height()
+        # zemin: en sık görülen kaba renk
+        say = {}
+        for y in range(0, h, 4):
+            for x in range(0, w, 4):
+                c = im.pixel(x, y); k = ((c >> 20) & 15, (c >> 12) & 15, (c >> 4) & 15); say[k] = say.get(k, 0) + 1
+        zr, zg, zb = [v*16 + 8 for v in max(say, key=say.get)]; zl = (zr*3 + zg*6 + zb)//10
+        sat = [0]*h; sut = [0]*w
+        for y in range(h):
+            for x in range(w):
+                c = im.pixel(x, y); r, g, b = (c >> 16) & 255, (c >> 8) & 255, c & 255
+                l = (r*3 + g*6 + b)//10; fark = abs(l - zl)
+                if fark < 46 and (max(r, g, b) - min(r, g, b) < 70 or fark < 14): continue   # zemin ya da soluk iz
+                if fark < 90 and b > r + 22 and b >= g and l > 105: continue   # açık mavi kare çizgisi
+                sat[y] += 1; sut[x] += 1
+        es_s = max(2, w//160); es_k = max(2, h//160)
+        ys = [y for y in range(h) if sat[y] >= es_s]; xs = [x for x in range(w) if sut[x] >= es_k]
+        if not ys or not xs: return pix
+        f = W/w; r_ = QRect(int(xs[0]*f) - pay, int(ys[0]*f) - pay, int((xs[-1] - xs[0] + 1)*f) + 2*pay, int((ys[-1] - ys[0] + 1)*f) + 2*pay) & pix.rect()
+        if r_.width() < 40 or r_.height() < 30 or r_.width()*r_.height() > .92*W*H: return pix
+        return pix.copy(r_)
+    except Exception as e:
+        print('atlas kırp:', e); return pix
+
 class AtlasPanel(QFrame):
     """Sağdan açılan 'Atlas'a sor' paneli. Tahtanın geri kalanı yazmaya açık kalır."""
     def __init__(self, main):
@@ -13533,7 +13600,8 @@ class AtlasPanel(QFrame):
         self.sec_b = QPushButton('▢  Tahtadan soru seç'); self.sec_b.setFocusPolicy(Qt.NoFocus); self.sec_b.setMinimumHeight(50)
         self.sec_b.setStyleSheet('QPushButton{border:1.5px dashed #22e8ff;color:#7ff6ff;border-radius:14px;font-size:19px;}')
         self.sec_b.clicked.connect(self.soru_sec); kv.addWidget(self.sec_b); v.addWidget(self.kontrol)
-        self.metin = AtlasCevap(self); v.addWidget(self.metin, 1)   # K-348/349: el yazısı, formüller kitap düzeninde
+        self.metin = AtlasCevap(self)   # K-348/349: el yazısı, formüller kitap düzeninde
+        self.orta = QHBoxLayout(); self.orta.setSpacing(14); self.orta.addWidget(self.metin, 1); v.addLayout(self.orta, 1)   # K-474: tam ekranda soru solda, çözüm sağda
         # K-346: iki satır düğme (dar panelde yazılar sığsın): Tahtaya yaz · Grafiği çiz / Yeniden sor · Daha ayrıntılı
         alt = QGridLayout(); alt.setHorizontalSpacing(8); alt.setVerticalSpacing(8)
         self.yaz_b = QPushButton('Tahtaya yaz'); self.yaz_b.setObjectName('birincil'); self.yaz_b.setFocusPolicy(Qt.NoFocus); self.yaz_b.clicked.connect(self.tahtaya_yaz); self.yaz_b.setEnabled(False); alt.addWidget(self.yaz_b, 0, 0)
@@ -13566,9 +13634,19 @@ class AtlasPanel(QFrame):
         self.yerlestir(); self.show(); self.raise_()
     def yerlestir(self):
         m = self.main.rect()
-        if self.tam: self.setGeometry(m); return
+        if self.tam: self.setGeometry(m); self.yer_ayir(); return
         w = max(440, min(620, int(m.width()*0.36)))
-        self.setGeometry(m.width() - w, 0, w, m.height())
+        self.setGeometry(m.width() - w, 0, w, m.height()); self.yer_ayir()
+    def yer_ayir(self):
+        """K-474: panel kenardayken tahta panelin genişliği kadar daralır: panel tahtayı ve soruyu örtmez. Tam ekranda ve kapalıyken yer ayrılmaz."""
+        bs = getattr(self.main, 'atlas_bosluk', None)
+        if bs is None: return
+        w = (self.width() - 4) if (self.isVisible() and not self.tam) else 0
+        if w > 0:
+            if bs.width() != w or not bs.isVisible(): bs.setFixedWidth(w); bs.show(); QTimer.singleShot(120, self.main.atlas_soruyu_sigdir)
+        elif bs.isVisible(): bs.hide(); bs.setFixedWidth(0)
+    def showEvent(self, e): super().showEvent(e); self.yer_ayir()
+    def hideEvent(self, e): super().hideEvent(e); self.yer_ayir()
     def tam_ekran(self, tam):
         """K-350: Atlas tam ekran: büyük maskot, seçenekler tek satır, cevap ortada kitap gibi ferah."""
         self.tam = bool(tam); self.tam_b.setText('⤡ Küçült' if self.tam else '⤢ Tam ekran')
@@ -13578,6 +13656,12 @@ class AtlasPanel(QFrame):
         self.maskot.setFixedSize(*((170, 172) if t else (150, 152)))
         self.baslik.setStyleSheet('font-size:%dpx;font-weight:800;color:#7ff6ff;' % (40 if t else 30))
         v, ust = self.v_ana, self.ust_sat   # K-363: tam ekranda menüler Atlas'ın yanında, cevap alanı büyük
+        # K-474: tam ekranda soru önizlemesi çözümün solunda büyük durur (çözüm alanı küçülmez); kenardayken eski yerinde (başlığın altında)
+        yan = bool(t and self.resim is not None and not self.resim.isNull())
+        if yan and self.orta.indexOf(self.onizleme) < 0:
+            v.removeWidget(self.onizleme); self.orta.insertWidget(0, self.onizleme, 0, Qt.AlignTop)
+        elif not yan and v.indexOf(self.onizleme) < 0:
+            self.orta.removeWidget(self.onizleme); v.insertWidget(v.indexOf(self.ust_bosluk) + 2, self.onizleme)
         if t and ust.indexOf(self.kontrol) < 0:
             v.removeWidget(self.kontrol); ust.insertWidget(ust.indexOf(self.tam_b), self.kontrol, 4)
             self.kv.removeWidget(self.sec_b); self.sat.addWidget(self.sec_b)   # ferah: iki satır (seçenekler / yaz · Sor · Tahtadan seç)
@@ -13598,7 +13682,13 @@ class AtlasPanel(QFrame):
         for i, b in enumerate((self.yaz_b, self.grafik_b, self.tekrar_b)): self.alt.addWidget(b, 0 if t else i//2, i if t else i % 2)
         for c in range(4): self.alt.setColumnStretch(c, 1 if ((t and c < 3) or c < 2) else 0)
         if self.resim is not None and not self.resim.isNull():
-            self.onizleme.setPixmap(self.resim.scaled(*((900, 230) if t else (420, 150)), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            # K-474: boş kenarlar kırpılır; tam ekranda soru ekranın genişliğine ve yüksekliğin %40'ına kadar büyür (öğrenci arkadan okuyabilsin)
+            ck = self.resim.cacheKey()   # kırpma bir kez hesaplanır (tam ekran / küçült geçişlerinde beklemesin)
+            if getattr(self, '_kirp', (None, None))[0] != ck: self._kirp = (ck, atlas_soru_kirp(self.resim))
+            kr = self._kirp[1]; mr = self.main.rect()
+            kutu = (max(420, int(mr.width()*0.42)), max(230, int(mr.height()*0.66))) if t else (420, 150)
+            self.onizleme.setPixmap(kr.scaled(kutu[0], kutu[1], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
     def ses_dugme(self):
         if self.ses_proc is not None: self.ses_bitir(); return
         if self.bekleyen or not self.ses_kom: return
@@ -13644,6 +13734,7 @@ class AtlasPanel(QFrame):
     def kapat(self):
         self.bek.stop(); self.bekleyen = None; self.hide(); self.klavye_kapat()
         if self.tam: self.tam_ekran(False)
+        QTimer.singleShot(60, self.main.atlas_gorunumu_geri)   # K-474
     def sor(self, istek, derin=False, ses=None):
         istek = (istek or '').strip()
         if not istek and self.resim is None: return
@@ -16019,11 +16110,21 @@ class GrafikCanlandir(QWidget):
     """Tahtaya açılırken eğrileri soldan sağa çizer (1,4 sn), sonra kaybolur; asıl grafik altta hazırdır."""
     def __init__(self, m, bilgi):
         super().__init__(m.board); self.m = m; self.bilgi = bilgi; self.t0 = time.monotonic()
+        m.board._canlandirma = getattr(m.board, '_canlandirma', 0) + 1; m.board.base = None   # K-473
         self.setAttribute(Qt.WA_TransparentForMouseEvents); self.setGeometry(m.board.rect()); self.show(); self.raise_()
         self.zm = QTimer(self); self.zm.setInterval(30); self.zm.timeout.connect(self.tik); self.zm.start()
     def tik(self):
-        if time.monotonic() - self.t0 > 1.5: self.zm.stop(); self.deleteLater(); return
+        if time.monotonic() - self.t0 > 1.5: self.zm.stop(); self.bitir(); return
         self.update()
+    def bitir(self):
+        """K-473: canlandırma bitince katman kalkar; bu sırada alınmış hazır görüntü varsa atılır ve tahta baştan çizilir."""
+        if getattr(self, '_bitti', False): return
+        self._bitti = True; b = self.m.board
+        try:
+            self.hide(); b._canlandirma = max(0, getattr(b, '_canlandirma', 1) - 1); b.base = None; b.snapshot = None if b.active is None else b.snapshot
+            b.update(); b.hazirla_sonra()
+        except Exception as e: print('grafik canlandır:', e)
+        self.deleteLater()
     def paintEvent(self, e):
         t = min(1.0, (time.monotonic() - self.t0)/1.4); b = self.m.board; k = b.scale; W = self.bilgi['W']; m_ = self.bilgi['m']
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)

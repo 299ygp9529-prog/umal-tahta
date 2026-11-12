@@ -15,6 +15,8 @@ def a1():
     w.last_touch = 0
     w.kelebek_new = dict(planlar=[dict(tarih=yarin, ders='7. Ders', sinav='İNGİLİZCE', salonlar={}, siniflar={})]); t0 = time.perf_counter(); w.take_kelebek(); print('sınıf', w.board_info().get('sinif'))
 def a2():
+    st = tk.exam_now(w.exam_clock(), getattr(w, 'exams', None)); print('durum', st and st.get('phase'), 'meşgul', tk.kalem_mesgul(w), 'sınavda', getattr(w, '_sinav_su_an', None), 'grade', tk.class_grade(w.board_info().get('sinif')))
+    w.kelebek_duyuru_denetle(); app.processEvents()
     d = getattr(w, 'kelebek_duyuru', None); print('duyuru açıldı:', d is not None and d.isVisible())
     subprocess.run(['import', '-window', 'root', '/tmp/onizleme/kelebek-duyuru.png'])
     t0 = time.perf_counter(); d.update(); app.processEvents(); print('yeniden boyama %.1f ms' % ((time.perf_counter() - t0)*1000)); d.b_kapat.click(); app.processEvents()

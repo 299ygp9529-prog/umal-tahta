@@ -1178,18 +1178,67 @@ def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
 _SK_IS = [None]
 _SK_PID = [0, []]
+_SK_X = [None]
+def _x11_klavye_gizle(pidler):
+    """K-484: xdotool olmadan (tahtalarda kurulu değil) doğrudan X11 ile: sınıfı / adı klavye olan ya da klavye sürecine ait görünür pencereler gizlenir.
+    Kendi bağlantısını açar (Qt'ninkine dokunmaz); Atlas'ın kendi pencereleri atlanır. Dönen: gizlenen pencere sayısı."""
+    import ctypes, re as _re
+    if _SK_X[0] is None:
+        X = ctypes.CDLL('libX11.so.6'); vp = ctypes.c_void_p; ul = ctypes.c_ulong
+        X.XOpenDisplay.restype = vp; X.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        X.XDefaultRootWindow.restype = ul; X.XDefaultRootWindow.argtypes = [vp]
+        X.XInternAtom.restype = ul; X.XInternAtom.argtypes = [vp, ctypes.c_char_p, ctypes.c_int]
+        X.XQueryTree.argtypes = [vp, ul, ctypes.POINTER(ul), ctypes.POINTER(ul), ctypes.POINTER(ctypes.POINTER(ul)), ctypes.POINTER(ctypes.c_uint)]
+        X.XGetWindowProperty.argtypes = [vp, ul, ul, ctypes.c_long, ctypes.c_long, ctypes.c_int, ul, ctypes.POINTER(ul), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ul), ctypes.POINTER(ul), ctypes.POINTER(vp)]
+        X.XGetWindowAttributes.argtypes = [vp, ul, vp]; X.XUnmapWindow.argtypes = [vp, ul]; X.XFree.argtypes = [vp]; X.XFlush.argtypes = [vp]; X.XSync.argtypes = [vp, ctypes.c_int]; X.XCloseDisplay.argtypes = [vp]
+        HT = ctypes.CFUNCTYPE(ctypes.c_int, vp, vp); X.XSetErrorHandler.restype = vp; X.XSetErrorHandler.argtypes = [HT]
+        _SK_X[0] = (X, HT(lambda d, e: 0))   # kapanmış pencere hatası süreci düşürmesin
+    X, yut = _SK_X[0]; ul = ctypes.c_ulong
+    X.XSetErrorHandler(yut)
+    d = X.XOpenDisplay(None)
+    if not d: return 0
+    say = 0
+    try:
+        a_pid = X.XInternAtom(d, b'_NET_WM_PID', 0); a_cls = 67; a_ad = 39; ben = os.getpid(); pidler = set(int(x) for x in pidler)
+        def ozellik(w, atom, uzun):
+            t = ul(); f = ctypes.c_int(); n = ul(); kalan = ul(); veri = ctypes.c_void_p()
+            if X.XGetWindowProperty(d, w, atom, 0, 64, 0, 0, ctypes.byref(t), ctypes.byref(f), ctypes.byref(n), ctypes.byref(kalan), ctypes.byref(veri)) != 0 or not veri.value: return None
+            try:
+                if uzun: return ctypes.cast(veri, ctypes.POINTER(ul))[0] if (f.value == 32 and n.value) else None
+                return ctypes.string_at(veri.value, n.value).replace(b'\0', b' ').decode('utf-8', 'replace') if f.value == 8 else None
+            finally: X.XFree(veri)
+        def cocuklar(w):
+            r_ = ul(); p_ = ul(); c_ = ctypes.POINTER(ul)(); n_ = ctypes.c_uint()
+            if not X.XQueryTree(d, w, ctypes.byref(r_), ctypes.byref(p_), ctypes.byref(c_), ctypes.byref(n_)) or not c_: return []
+            try: return [c_[i] for i in range(n_.value)]
+            finally: X.XFree(c_)
+        oz = ctypes.create_string_buffer(256)
+        def gez(w, derinlik):
+            nonlocal say
+            for c in cocuklar(w)[:400]:
+                pid = ozellik(c, a_pid, True); sinif = ozellik(c, a_cls, False)
+                if pid != ben and (pid or sinif):
+                    ad = (sinif or '') + ' ' + (ozellik(c, a_ad, False) or '')
+                    if (pid in pidler) or _re.search(SISTEM_KLAVYE_RE, ad, _re.I) or (sinif and _re.search('(keyboard|klavye)', sinif, _re.I)):
+                        if X.XGetWindowAttributes(d, c, oz) and ctypes.c_int.from_buffer(oz, 92).value == 2:   # map_state == IsViewable
+                            X.XUnmapWindow(d, c); say += 1
+                        continue
+                if derinlik < 2 and pid != ben: gez(c, derinlik + 1)
+        gez(X.XDefaultRootWindow(d), 0); X.XSync(d, 0)
+    finally: X.XCloseDisplay(d)
+    return say
 def sistem_klavyesini_gizle():
     """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
     yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
     import subprocess, threading
-    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1' or not shutil.which('xdotool'): return
+    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1': return
     if _SK_IS[0] is not None and _SK_IS[0].is_alive(): return
     def calis():
-        ids = set()
-        for kip in ('--classname', '--class', '--name'):
+        ids = set(); xdo = bool(shutil.which('xdotool')) and os.environ.get('UMAL_XDOTOOL_YOK') != '1'
+        for kip in ('--classname', '--class', '--name') if xdo else ():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
-        for kip in ('--classname', '--class'):   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
+        for kip in ('--classname', '--class') if xdo else ():   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
@@ -1205,7 +1254,11 @@ def sistem_klavyesini_gizle():
                     if int(d_) != os.getpid() and _re.search(r'(keyboard|klavye|onboard|florence|squeekboard)', c_.split(' ')[0] + ' ' + ' '.join(c_.split(' ')[1:3])): pid_.append(d_)
             except OSError: pass
             _SK_PID[:] = [time.time(), pid_]
-        for pd_ in _SK_PID[1]:
+        try:   # K-484: asıl yol — xdotool gerekmez
+            n_ = _x11_klavye_gizle(_SK_PID[1])
+            if n_: print('sistem klavyesi gizlendi (x11)', n_)
+        except Exception as e_: print('x11 klavye gizle:', e_)
+        for pd_ in _SK_PID[1] if xdo else ():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', pd_], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         ben = os.getpid()
@@ -3809,7 +3862,7 @@ class Window(QMainWindow):
             if o is not None: o.fit(vp); o.raise_()
         sb=getattr(self,'soru_buyut_b',None)
         if sb is not None:
-            g_=getattr(self,'solution_origin',None) is not None
+            g_=getattr(self,'solution_origin',None) is not None and not (ap is not None and ap.isVisible() and not ap.tam)   # Atlas yandayken soru zaten sığdırılır; dar alanda düğmeler üst üste gelmesin
             if sb.isVisibleTo(self.nav)!=g_: sb.setVisible(g_)
         self.nav.adjustSize();self.nav.move(vp.x()+10,vp.bottom()-self.nav.height()-10);self.nav.raise_()   # lower left
         fb=getattr(self,'float_bell',None)
@@ -12773,6 +12826,8 @@ class AtlasYuzen(QWidget):
         except Exception: pass
         return getattr(m, 'tool', '') != 'atlas'
     def durum(self):
+        if self.solgun and getattr(self.main.board, 'active', None) is not None:   # K-483: kalem basılıyken Atlas hiçbir iş yapmaz (yalnız resim)
+            self._son_aktif = time.monotonic(); return
         g = self.gorunmeli()
         if g != self.isVisible():
             self.setVisible(g)
@@ -12785,12 +12840,7 @@ class AtlasYuzen(QWidget):
         if aktif: self._son_aktif = time.monotonic()
         sol = aktif or time.monotonic() - self._son_aktif < 1.2   # kalemle yazılırken solar, dokunuş tahtaya geçer
         if sol != self.solgun:
-            self.solgun = sol; self.setAttribute(Qt.WA_TransparentForMouseEvents, sol)
-            fx = self.graphicsEffect()
-            if fx is None:
-                from PyQt5.QtWidgets import QGraphicsOpacityEffect
-                fx = QGraphicsOpacityEffect(self); self.setGraphicsEffect(fx)
-            fx.setOpacity(0.25 if sol else 1.0)
+            self.solgun = sol; self.setAttribute(Qt.WA_TransparentForMouseEvents, sol)   # K-483: solma efekti kaldırıldı (her boyamada ara görüntü üretiyordu); yazarken yalnız dokunuş tahtaya geçer
             if sol: self.etiket.hide()
     def etiket_goster(self, sn=5000):
         if not self.isVisible(): return

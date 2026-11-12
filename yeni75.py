@@ -15880,7 +15880,7 @@ class HavaKart(QWidget):
         except RuntimeError: pass
     def mousePressEvent(self, e): self.kapat()
     def yerlestir(self):
-        pw = self.parentWidget(); W, H = pw.width(), pw.height(); k = min(W/1600, H/900) or 1
+        r_ = self.parentWidget().rect(); W, H = r_.width(), r_.height(); k = min(W/1600, H/900) or 1   # Window.width bir QSpinBox
         if self.oz.get('kotu'): w, h = int(900*k), int(250*k); self.setGeometry((W - w)//2, int(H*.10), w, h)
         else: w, h = int(560*k), int(170*k); self.setGeometry(W - w - int(40*k), int(110*k), w, h)
         self._on = None

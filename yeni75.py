@@ -13514,27 +13514,34 @@ def yabanci_yazi_temizle(t):
     t = re.sub(r'[\u0400-\u052F\u0590-\u08FF\u0900-\u0DFF\u0E00-\u0FFF\u1100-\u11FF\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]+', '', t)
     return re.sub(r'[ \t]{2,}', ' ', t).replace(' :', ':').replace(' ,', ',')
 
-def atlas_soru_kirp(pix, pay=12):
-    """K-474: seçilen sorunun çevresindeki boş (tek renk) kenarları kırpar; soru önizlemede olabildiğince büyük görünür."""
+def atlas_soru_kirp(pix, pay=14):
+    """K-474/K-475: seçilen sorunun çevresindeki boş alanı kırpar; soru önizlemede olabildiğince büyük görünür.
+    Zemin tek renk olmayabilir (kareli çözüm alanı): ince, açık renkli kare çizgileri yazı sayılmaz; yazı ve şekil = zeminden belirgin koyu ya da canlı renkli nokta."""
     try:
         W, H = pix.width(), pix.height()
         if W < 40 or H < 40: return pix
-        kw = min(W, 160); im = pix.toImage().scaled(kw, max(1, int(H*kw/W)), Qt.IgnoreAspectRatio, Qt.FastTransformation).convertToFormat(QImage.Format_RGB32)
-        w, h = im.width(), im.height(); zemin = im.pixel(1, 1)
-        zr, zg, zb = (zemin >> 16) & 255, (zemin >> 8) & 255, zemin & 255
-        x0, y0, x1, y1 = w, h, -1, -1
+        kw = min(W, 420); im = pix.toImage().scaled(kw, max(1, int(H*kw/W)), Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB32)
+        w, h = im.width(), im.height()
+        # zemin: en sık görülen kaba renk
+        say = {}
+        for y in range(0, h, 4):
+            for x in range(0, w, 4):
+                c = im.pixel(x, y); k = ((c >> 20) & 15, (c >> 12) & 15, (c >> 4) & 15); say[k] = say.get(k, 0) + 1
+        zr, zg, zb = [v*16 + 8 for v in max(say, key=say.get)]; zl = (zr*3 + zg*6 + zb)//10
+        sat = [0]*h; sut = [0]*w
         for y in range(h):
             for x in range(w):
-                c = im.pixel(x, y)
-                if abs(((c >> 16) & 255) - zr) + abs(((c >> 8) & 255) - zg) + abs((c & 255) - zb) > 60:
-                    if x < x0: x0 = x
-                    if x > x1: x1 = x
-                    if y < y0: y0 = y
-                    if y > y1: y1 = y
-        if x1 < 0: return pix
-        f = W/w; r = QRect(int(x0*f) - pay, int(y0*f) - pay, int((x1 - x0 + 1)*f) + 2*pay, int((y1 - y0 + 1)*f) + 2*pay) & pix.rect()
-        if r.width() < 40 or r.height() < 30 or r.width()*r.height() > .9*W*H: return pix
-        return pix.copy(r)
+                c = im.pixel(x, y); r, g, b = (c >> 16) & 255, (c >> 8) & 255, c & 255
+                l = (r*3 + g*6 + b)//10; fark = abs(l - zl)
+                if fark < 46 and (max(r, g, b) - min(r, g, b) < 70 or fark < 14): continue   # zemin ya da soluk iz
+                if fark < 90 and b > r + 22 and b >= g and l > 105: continue   # açık mavi kare çizgisi
+                sat[y] += 1; sut[x] += 1
+        es_s = max(2, w//160); es_k = max(2, h//160)
+        ys = [y for y in range(h) if sat[y] >= es_s]; xs = [x for x in range(w) if sut[x] >= es_k]
+        if not ys or not xs: return pix
+        f = W/w; r_ = QRect(int(xs[0]*f) - pay, int(ys[0]*f) - pay, int((xs[-1] - xs[0] + 1)*f) + 2*pay, int((ys[-1] - ys[0] + 1)*f) + 2*pay) & pix.rect()
+        if r_.width() < 40 or r_.height() < 30 or r_.width()*r_.height() > .92*W*H: return pix
+        return pix.copy(r_)
     except Exception as e:
         print('atlas kırp:', e); return pix
 
@@ -13676,7 +13683,9 @@ class AtlasPanel(QFrame):
         for c in range(4): self.alt.setColumnStretch(c, 1 if ((t and c < 3) or c < 2) else 0)
         if self.resim is not None and not self.resim.isNull():
             # K-474: boş kenarlar kırpılır; tam ekranda soru ekranın genişliğine ve yüksekliğin %40'ına kadar büyür (öğrenci arkadan okuyabilsin)
-            kr = atlas_soru_kirp(self.resim); mr = self.main.rect()
+            ck = self.resim.cacheKey()   # kırpma bir kez hesaplanır (tam ekran / küçült geçişlerinde beklemesin)
+            if getattr(self, '_kirp', (None, None))[0] != ck: self._kirp = (ck, atlas_soru_kirp(self.resim))
+            kr = self._kirp[1]; mr = self.main.rect()
             kutu = (max(420, int(mr.width()*0.42)), max(230, int(mr.height()*0.66))) if t else (420, 150)
             self.onizleme.setPixmap(kr.scaled(kutu[0], kutu[1], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 

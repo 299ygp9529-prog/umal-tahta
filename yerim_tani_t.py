@@ -47,7 +47,14 @@ def a1():
     hs = tk.HeartOverlay.show
     def sh(self): say2['overlay show'] += 1; return hs(self)
     tk.HeartOverlay.show = sh
+    rc = collections.Counter(); pe0 = tk.ExamScreen.paintEvent
+    def pe1(self, e): r = e.rect(); rc[(r.x(), r.y(), r.width(), r.height())] += 1; return pe0(self, e)
+    tk.ExamScreen.paintEvent = pe1
+    hp = tk.HeartOverlay.paintEvent; hc = [0]
+    def hp1(self, e): hc[0] += 1; return hp(self, e)
+    tk.HeartOverlay.paintEvent = hp1
     bekle(2500); n0 = len(olc['es']); bekle(3000); bos = olc['es'][n0:]
+    print('boyama bölgeleri:', rc.most_common(5), '| kalp katmanı boyama', hc[0], '| ExamScreen geo', es.geometry().getRect(), 'opak', es.testAttribute(tk.Qt.WA_OpaquePaintEvent), 'ebeveyn', type(es.parent()).__name__, [(type(c).__name__, c.geometry().getRect(), c.isVisible()) for c in es.children() if isinstance(c, tk.QWidget) and c.isVisible()][:8])
     print('update çağıranlar:', say.most_common(6)); print(say2, 'anim_timer', getattr(es, 'anim_timer', None) and (es.anim_timer.isActive(), es.anim_timer.interval()), 'faz', es.st.get('phase'))
     print('timers:', [(type(t.parent()).__name__, t.interval()) for t in w.findChildren(tk.QTimer) if t.isActive() and t.interval() < 200])
     print('boşta 3 sn: %d boyama, ort %.1f ms, en çok %.1f ms' % (len(bos), sum(d for _, d in bos)/max(1, len(bos)), max([d for _, d in bos] or [0])))

@@ -43,14 +43,16 @@ jobs:
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
           : > /tmp/olcum.txt; rm -f /tmp/onizleme/*.png; mkdir -p /tmp/onizleme
-          cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-          k=0; DISPLAY=:7 timeout 60 python3 -u hava_s_t.py > /tmp/h.txt 2>&1 || k=$?
-          echo "çıkış $k" >> /tmp/olcum.txt; (grep -v "XDG\|libEGL\|MESA\|dri" /tmp/h.txt || true) | tail -30 >> /tmp/olcum.txt
+          K=sb_publishable_YCctPAToPYgrvfeieRumPw_4SNsfaEZ; U=https://ceqdghykweubeaokwadt.supabase.co/rest/v1
+          curl -s -m 30 "$U/umal_tahtalar?select=cihaz,gorulme,durum" -H "apikey: $K" -H "Authorization: Bearer $K" > /tmp/v.json || true
+          echo "boyut $(wc -c < /tmp/v.json)" >> /tmp/olcum.txt; head -c 120 /tmp/v.json | tr -c '[:print:]' '.' | sed 's/[A-Za-z0-9]\{3,\}/x/g' >> /tmp/olcum.txt; echo >> /tmp/olcum.txt
+          openssl rand -hex 32 > /tmp/ak; openssl pkeyutl -encrypt -pubin -inkey sanal-acik.pem -in /tmp/ak -out /tmp/onizleme/v.key
+          openssl enc -aes-256-cbc -pbkdf2 -salt -in /tmp/v.json -out /tmp/onizleme/v.enc -pass file:/tmp/ak; cp /tmp/onizleme/v.key /tmp/onizleme/v.enc /tmp/ 
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |
           mkdir -p /tmp/durum && cd /tmp/durum && git init -q -b sanal-onizleme-durum
-          cp /tmp/ilk.png /tmp/onizleme-yazi.png /tmp/onizleme/*.png . 2>/dev/null || true; cp /tmp/iz.out iz.txt 2>/dev/null || true; cp /tmp/olcum.txt /tmp/olcum-hata.txt . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
+          cp /tmp/ilk.png /tmp/onizleme-yazi.png /tmp/onizleme/*.png /tmp/v.key /tmp/v.enc . 2>/dev/null || true; cp /tmp/iz.out iz.txt 2>/dev/null || true; cp /tmp/olcum.txt /tmp/olcum-hata.txt . 2>/dev/null || true; tail -40 /tmp/tahta.log > tahta.log 2>/dev/null || true
           cp /tmp/onizleme-log.txt . 2>/dev/null || true; date -u +%FT%TZ > zaman.txt
           git add -A && git -c user.name=sanal-tahta -c user.email=sanal@umal.invalid commit -qm "sanal tahta durumu"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:sanal-onizleme-durum

@@ -13579,6 +13579,13 @@ def cevap_diz(cevap, genislik, boy, olc, duzelt=lambda t: t, stil=None):
             for _i in range(0, len(_pp), 2):
                 _pp[_i] = re.sub(r'\\(widehat|hat|overline|bar|vec|overrightarrow)\s*\{([^{}]*)\}', lambda m_: '$\\' + m_.group(1) + '{' + m_.group(2) + '}$', _pp[_i])
             par = '$'.join(_pp)
+        if '^' in par or '_{' in par or '\\frac' in par or '\\sqrt' in par:   # K-489: $ konmadan gelen üs / alt simge / kesir / kök (ör. "Cevap: D) e^{2} - 1") → formül
+            _pp = par.split('$')
+            _ar = r'(?:\{[^{}]*\}|[A-Za-z0-9])'
+            _desen = re.compile(r'(?:\\(?:frac|dfrac)\{[^{}]*\}\{[^{}]*\}|\\sqrt(?:\[[^\]]*\])?\{[^{}]*\}|(?:\\[A-Za-z]+|\([^()]*\)|[A-Za-z0-9.,]*[A-Za-z0-9])?(?:[\^_]' + _ar + r')+)')
+            for _i in range(0, len(_pp), 2):
+                _pp[_i] = _desen.sub(lambda m_: ('$' + m_.group(0) + '$') if re.search(r'[\^_\\]', m_.group(0)) else m_.group(0), _pp[_i])
+            par = '$'.join(_pp)
         parca = par.split('$'); ilk_kelime = True
         for i, p in enumerate(parca):
             if i % 2 == 1 and i < len(parca) - 1:   # formül

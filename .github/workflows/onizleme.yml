@@ -44,8 +44,7 @@ jobs:
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
           : > /tmp/olcum.txt
           cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-          DISPLAY=:7 timeout 60 python3 okul_t.py > /tmp/ok.txt 2>&1; echo "okul çıkış kodu $?" >> /tmp/olcum.txt; grep -v XDG /tmp/ok.txt | tail -3 >> /tmp/olcum.txt
-          DISPLAY=:7 timeout 60 python3 dbs_s_t.py > /tmp/dbs.txt 2>&1; echo "dbs çıkış kodu $?" >> /tmp/olcum.txt
+          DISPLAY=:7 timeout 60 python3 ustel_s_t.py > /tmp/u.txt 2>&1; echo "ustel çıkış kodu $?" >> /tmp/olcum.txt; grep -v XDG /tmp/u.txt | tail -3 >> /tmp/olcum.txt
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

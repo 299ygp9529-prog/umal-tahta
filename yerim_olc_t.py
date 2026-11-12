@@ -51,6 +51,10 @@ def a1():
         print('%d) dokunuş (Yerimi bul çıkar) %.0f ms | salon açılışı: ilk çizime kadar %.0f ms (çizim %.0f ms) | pencere açıkken sınav ekranı %d kez boyandı (toplam %.0f ms) | kapanış %.0f ms | dönüşte 4 sn: %d boyama, en çok %.0f ms, toplam %.0f ms'
               % (tur + 1, (t1 - t0)*1000, (ilk[0] - t2)*1000, ilk[1], len(arada), sum(d for _, d in arada), (t3 - kapat[0])*1000, len(son), max([d for _, d in son] or [0]), sum(d for _, d in son)))
     print('sınav ekranı duruyor:', w.exam_screen is es); es = w.exam_screen
+    n = len(olc['es']); es.update(); bekle(300); a_ = len(olc['es']) - n; n = len(olc['es']); es.repaint(); b_ = len(olc['es']) - n
+    print('update sonrası boyama', a_, '| repaint sonrası', b_, '| updatesEnabled', es.updatesEnabled(), w.updatesEnabled(), w.scroll.updatesEnabled(), '| görünür bölge', es.visibleRegion().boundingRect().getRect(), '| modal', QApplication.activeModalWidget(), '| üst pencereler', [(type(t).__name__, t.isVisible()) for t in QApplication.topLevelWidgets() if t.isVisible()])
+    print('scroll çocukları (üstte olanlar):', [(type(c).__name__, c.geometry().getRect()) for c in w.scroll.children() if isinstance(c, tk.QWidget) and c.isVisible()][-6:])
+    print('neon anim', es.ara_btn._neon.state() if hasattr(es, 'ara_btn') else None, '| anim_timer', hasattr(es, 'anim_timer') and es.anim_timer.isActive())
     print('dönüşte ekran görünür:', es is not None and es.isVisible(), '| pencere etkin:', w.isActiveWindow(), '| exposed:', w.windowHandle().isExposed())
     import subprocess; subprocess.run(['import', '-window', 'root', '/tmp/onizleme/sinav-yerleri.png']); print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
 QTimer.singleShot(2500, a1); app.exec_()

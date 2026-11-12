@@ -1466,14 +1466,7 @@ def neon_button(parent, on_click, font_px=22):
     b = QPushButton(NEON_ARA_TEXT, parent); b.setFocusPolicy(Qt.NoFocus); b.setMinimumHeight(58); b.clicked.connect(on_click)
     b.setStyleSheet('QPushButton{background:rgba(8,14,30,0.92);color:#7ff6ff;border:3px solid #22e8ff;border-radius:18px;padding:0 30px;font-size:%dpx;font-weight:800;}'
                     'QPushButton:pressed{background:#0d2a3a;}' % font_px)
-    fx = QGraphicsDropShadowEffect(b); fx.setColor(QColor(34, 232, 255)); fx.setOffset(0, 0); fx.setBlurRadius(30); b.setGraphicsEffect(fx)
-    # K-493: ışıma eskiden saniyede ~60 kez yeniden bulanıklaştırılıyor, her seferinde arkasındaki tam ekranı da boyatıyordu (sınav yerleri ekranı donuyordu).
-    # Artık saniyede 4 adım: aynı nefes alan ışıma, on beşte bir yük; düğme görünmüyorken hiç çalışmaz.
-    t = QTimer(b); t.setInterval(250)
-    def adim():
-        if not b.isVisible(): return
-        f = (time.monotonic() % 2.2)/2.2; fx.setBlurRadius(16.0 + 28.0*(1 - abs(2*f - 1)))
-    t.timeout.connect(adim); t.start(); b._neon = t
+    # K-495: ışıma efekti (QGraphicsDropShadowEffect) kaldırıldı — düz camgöbeği kenar; arkasındaki ekranı yeniden boyatmaz
     return b
 
 OFFICE_EXTS = ('.pptx', '.ppt', '.ppsx', '.pps', '.odp', '.docx', '.doc', '.odt', '.rtf', '.pptm', '.potx')
@@ -5611,7 +5604,10 @@ class Window(QMainWindow):
                         else: continue
                     if not blob:
                         self.kelebek_new = {}; break
-                    self.kelebek_new = kelebek_open(blob)
+                    import hashlib as _h
+                    oz = _h.sha256(blob).hexdigest()
+                    if oz == getattr(self, '_kelebek_oz', None) and self.kelebek is not None: break   # K-495: plan değişmemiş — çözülmez (1,7 MB çözmek yavaş tahtada ekranı durduruyordu)
+                    self.kelebek_new = kelebek_open(blob); self._kelebek_oz = oz
                     with open(cache + '.tmp', 'wb') as f: f.write(blob)
                     os.replace(cache + '.tmp', cache); break
                 # fotoğraflar: yoksa, 6 saatten eskiyse ya da plan yeni bir fotoğraf paketi bildiriyorsa (foto_surum)
@@ -8593,12 +8589,11 @@ class ExamScreen(QWidget):
         own = st['exams'].get(grade) or next(iter(st['exams'].values()))
         if exam_theme(own)[1] == 'formul' and st['phase'] in ('before', 'during') and getattr(self, 'intro_key', None) != st['key']:
             self.intro_key = st['key']; self.anim_t0 = time.monotonic()   # ekran ilk açıldığında bir kez
-        anim = time.monotonic() - getattr(self, 'anim_t0', -99) < self.MATH_INTRO or (st['phase'] == 'during' and st['end'] - st['t'] <= 60 and exam_theme(own)[1] == 'formul')
+        anim = False   # K-495: matematik açılış animasyonu ve akıcı tema kaldırıldı; sayaç saniyede bir (exam_timer) güncellenir
+        if False: anim = time.monotonic() - getattr(self, 'anim_t0', -99) < self.MATH_INTRO or (st['phase'] == 'during' and st['end'] - st['t'] <= 60 and exam_theme(own)[1] == 'formul')
         iv_ = 33 if anim else 50
         if not anim and st['phase'] in ('teneffus', 'after'): anim = True; iv_ = 1000   # K-494: saniyede bir (eskiden 10 kare/sn tam ekran)   # canlı tema / nefes alan neon; K-429: 10 kare/sn yeter (tahtayı yormasın)
-        if not anim and st['phase'] in ('before', 'during'):
-            pl_ = self.main.seat_plan(st) if hasattr(self.main, 'seat_plan') else None
-            anim = not (pl_ and seat_layout(pl_))   # sayaç ekranı: tema akıcı; fotoğraflı plan saniyede bir
+        # K-495: sayaç ekranı da saniyede bir (akıcı tema kaldırıldı)
         if getattr(self, 'fx_until', 0) > time.monotonic(): anim = True   # dokunuş/onay efekti
         if anim and not hasattr(self, 'anim_timer'):
             self.anim_timer = QTimer(self); self.anim_timer.timeout.connect(self.update)
@@ -8649,7 +8644,7 @@ class ExamScreen(QWidget):
             f = QFont(famb if bold else fam); f.setPixelSize(max(10, int(px*k))); return f
         if st['phase'] == 'teneffus':   # teneffüs modu: saat, sıradaki ders, sınava geri sayım, 5 günlük takvim
             draw_teneffus(p, W, H, k, font, st['tn']); p.end(); return
-        draw_exam_theme(p, W, H, k, kind, theme, time.time() % 86400)   # canlı: akıcı ekranlarda saniyede ~11 kez çizilir
+        draw_exam_theme(p, W, H, k, kind, theme, 0.0)   # K-495: sabit desen (kayan yazı / hareket yok)
         def text(rect, s_, px, color, bold=False, align=Qt.AlignCenter):
             p.setFont(font(px, bold)); p.setPen(QColor(color)); p.drawText(rect, align, s_)
         hm = lambda x: '%02d.%02d' % (x//3600, x%3600//60)
@@ -8690,7 +8685,7 @@ class ExamScreen(QWidget):
                 else:
                     text(QRectF(bn.x() + 246*k, bn.y(), bn.width() - 260*k, bn.height()), ('Gelmeyenin fotoğrafına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın' if BOARD_PHOTOS else 'Gelmeyenin adına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın') % len(self.absent), 18, '#ffd78a', True, Qt.AlignLeft | Qt.AlignVCenter)
             e_ = time.monotonic() - getattr(self, 'anim_t0', -99)
-            if kind == 'formul' and e_ < self.MATH_INTRO: self.draw_math_intro(p, W, H, k, font, theme, e_)
+            pass   # K-495: matematik açılış animasyonu kaldırıldı
             p.end(); return
         X0, CW, sc = (W*.62, W*.38, .55) if plan else (0, W, 1)   # oturma planı varsa sayaç sağda
         if plan: self.draw_plan(p, QRectF(24*k, 24*k, W*.62 - 32*k, H - 48*k), plan, k, font, theme, phase)
@@ -8736,9 +8731,7 @@ class ExamScreen(QWidget):
             info = 'Saat %s  ·  Başlangıç %s  ·  Bitiş %s  ·  Süre %d dakika' % (hm(st['t']), hm(st['start']), hm(st['end']), (st['end'] - st['start'])//60)
             if plan: info = 'Saat %s  ·  %s – %s' % (hm(st['t']), hm(st['start']), hm(st['end']))
             text(QRectF(X0, bar_y + 28*k, CW, 50*k), info, 28, '#9fb3cc')
-        e_ = time.monotonic() - getattr(self, 'anim_t0', -99)
-        if kind == 'formul' and e_ < self.MATH_INTRO: self.draw_math_intro(p, W, H, k, font, theme, e_)
-        p.end()
+        p.end()   # K-495: matematik açılış animasyonu kaldırıldı
 
     def draw_plan(self, p, R, plan, k, font, theme, phase):
         """Oturma planı: sıra numarasına göre 4 sütun; her satırda sıra, ad soyad, sınıfı."""
@@ -10704,7 +10697,7 @@ def seat_zemin(p, W, H, k, plan, crs=None):
     """Oturma planının zemini: koyu fon ve dersin canlı teması (önbelleğe girmez, her çizimde)."""
     p.fillRect(QRectF(0, 0, W, H), QColor('#0d1726'))
     crs = seat_courses(plan) if crs is None else crs
-    if crs: tcol, tkind = exam_theme(crs[0]); draw_exam_theme(p, W, H, k, tkind, tcol, time.time() % 86400)
+    if crs: tcol, tkind = exam_theme(crs[0]); draw_exam_theme(p, W, H, k, tkind, tcol, 0.0)   # K-495: sabit
 def _draw_seatmap_onbellek(self, p, W, H, k, font, plan, theme, accent, head):
     """K-429: fotoğraflı oturma planı saniyede bir yeniden çiziliyordu (yavaş tahtada ~250 ms). Artık yalnız içerik değişince
     (yoklama, plan, boyut) bir kez çizilip saklanır; her saniye yalnız zemin (tema) ve saklı resim konur. Saat kutusu kalp atışı katmanında canlı."""
@@ -13153,7 +13146,7 @@ class AtlasYuzen(QWidget):
     def __init__(self, main):
         super().__init__(main.scroll); self.main = main; self.setFixedSize(self.BOY, self.BOY); self.setAttribute(Qt.WA_TranslucentBackground)
         self.maskot = AtlasMaskot(self); self.maskot.setGeometry(8, 6, self.BOY - 16, self.BOY - 12); self.maskot.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.maskot.dur = main.kalem_yaziyor   # K-482
+        self.maskot.dur = main.kalem_yaziyor; self.maskot.sabit = True   # K-482 · K-495
         self.etiket = QLabel("Atlas'a sor", main.scroll); self.etiket.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.etiket.setStyleSheet('QLabel{background:rgba(8,20,40,235);color:#7ff6ff;border:2px solid #22e8ff;border-radius:16px;padding:6px 16px;font-size:20px;font-weight:800;}')
         self.etiket.adjustSize(); self.etiket.hide()
@@ -13163,7 +13156,7 @@ class AtlasYuzen(QWidget):
         except Exception: pass
         self.bas = None; self.surukle = False; self.solgun = False; self._son_aktif = 0.0
         self.uzun = QTimer(self); self.uzun.setSingleShot(True); self.uzun.setInterval(450); self.uzun.timeout.connect(self._suruklemeye_gec)
-        self.yokla = QTimer(self); self.yokla.setInterval(250); self.yokla.timeout.connect(self.durum); self.yokla.start()
+        self.yokla = QTimer(self); self.yokla.setInterval(500); self.yokla.timeout.connect(self.durum); self.yokla.start()
         self.etiket_t = QTimer(self); self.etiket_t.setSingleShot(True); self.etiket_t.timeout.connect(self.etiket.hide)
         self._ilk = True; self.hide()
     def gorunmeli(self):
@@ -13421,7 +13414,9 @@ class AtlasMaskot(QWidget):
         self.zaman = QTimer(self); self.zaman.setInterval(40); self.zaman.timeout.connect(self.tik)
     def ifade(self, ad):
         if ad in self.IFADE: self.ad = ad
-    def showEvent(self, e): self.zaman.start(); super().showEvent(e)
+    def showEvent(self, e):
+        if not getattr(self, 'sabit', False): self.zaman.start()   # K-495: köşedeki maskot sabit resim (göz animasyonu yok)
+        super().showEvent(e)
     def hideEvent(self, e): self.zaman.stop(); super().hideEvent(e)
     def tik(self):
         d = getattr(self, 'dur', None)   # K-482: kalem yazarken maskot canlanmaz (ekran her 40 ms'de yeniden boyanmasın)
@@ -14804,13 +14799,14 @@ class PanelClock(QWidget):
     Kadran (logo, çizgiler, rakamlar) bir kez çizilip saklanır; her saniye yalnız ibreler ve yazı."""
     def __init__(self, parent=None):
         super().__init__(parent); self.setMinimumHeight(110); self.now = None; self._kadran = None; self._isik = None; self._logo_r = None; self._son_sn = None
-        self.timer = QTimer(self); self.timer.timeout.connect(self.tik); self.timer.start(50)
+        self.timer = QTimer(self); self.timer.timeout.connect(self.tik); self.timer.start(250)   # K-495: 20 → 4 uyanma/sn, boyama saniyede bir
     ISIK_DONGU, ISIK_BAS = 6.0, .55   # K-455: web panelindeki gibi logonun üstünden 6 sn'de bir geçen ışık (döngünün son %45'i)
     def tik(self):
         """Saniye değişince bütün saat; ışık geçerken yalnız logo bölgesi (yazarken ışık beklemede: kalem akıcılığı)."""
         import datetime
         sn = (self.now or datetime.datetime.now()).second
         if sn != self._son_sn: self._son_sn = sn; self.update(); return
+        return   # K-495: logonun üstünden geçen ışık kaldırıldı
         f = (time.time() % self.ISIK_DONGU)/self.ISIK_DONGU
         if f >= self.ISIK_BAS - .02 and self._logo_r is not None and self.isVisible():
             try:
@@ -17604,7 +17600,7 @@ def main():
             if QApplication.applicationState() == Qt.ApplicationActive and not window.kalem_yaziyor(): sistem_klavyesini_gizle()   # K-484: yazarken ve bıraktıktan 1,5 sn sonrasına kadar tarama yok
         except Exception: pass
     window._bellek_zaman = QTimer(window); window._bellek_zaman.timeout.connect(lambda: bellek_bekcisi(window)); window._bellek_zaman.start(20000)   # K-461
-    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(700)   # K-461: 2 sn → 0,7 sn
+    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(5000)   # K-495: genel tarama 5 sn; Atlas klavyesi açıkken kendi 0,7 sn taraması
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

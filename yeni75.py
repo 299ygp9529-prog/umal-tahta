@@ -13814,8 +13814,9 @@ class AtlasCevap(QFrame):
         v = QVBoxLayout(self); v.setContentsMargins(12, 10, 6, 10)
         self.alan = QScrollArea(); self.alan.setWidgetResizable(False); self.alan.setFrameShape(QFrame.NoFrame)
         self.alan.setStyleSheet('QScrollArea{background:transparent;} QScrollArea > QWidget > QWidget{background:transparent;}'
-                                'QScrollBar:vertical{background:transparent;width:10px;margin:4px 0;} QScrollBar::handle:vertical{background:#2a6f8a;border-radius:5px;min-height:40px;}'
-                                'QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;} QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:none;}')
+                                'QScrollBar:vertical{background:rgba(42,111,138,.22);width:26px;margin:4px 0;border-radius:13px;} QScrollBar::handle:vertical{background:#3fa9d6;border:2px solid #7ff6ff;border-radius:11px;min-height:90px;margin:2px;}'
+                                'QScrollBar::handle:vertical:pressed{background:#22e8ff;}'
+                                'QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;} QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:none;}')   # K-491: kalın, parmakla rahat tutulan çubuk
         self.alan.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.resim = QLabel(); self.resim.setStyleSheet('background:transparent;'); self.alan.setWidget(self.resim); v.addWidget(self.alan)
         QScroller.grabGesture(self.alan.viewport(), QScroller.LeftMouseButtonGesture)
@@ -13827,7 +13828,7 @@ class AtlasCevap(QFrame):
         self.metin = t or ''; self.formul = formul; self._ciz(); self.alan.verticalScrollBar().setValue(0)
     def toPlainText(self): return self.metin
     def _ciz(self):
-        g = max(200, self.alan.width() - 22); self._gen = g   # kaydırma çubuğu çıksa da kesilmesin
+        g = max(200, self.alan.width() - 38); self._gen = g   # kaydırma çubuğu çıksa da kesilmesin (K-491: çubuk 26 px)
         if self.tam:
             sayfa = min(g, 1250)   # kitap sayfası genişliği; ortada
             im = atlas_cevap_resmi(self.metin, sayfa, 38, '#eef6ff', self.formul, ATLAS_STIL_TAM)
@@ -13837,7 +13838,7 @@ class AtlasCevap(QFrame):
             self.resim.setPixmap(QPixmap.fromImage(im)); self.resim.setFixedSize(im.width(), im.height()); self.resim.setAlignment(Qt.AlignLeft | Qt.AlignTop)
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if abs(self.alan.width() - 22 - self._gen) > 4: QTimer.singleShot(0, self._ciz)
+        if abs(self.alan.width() - 38 - self._gen) > 4: QTimer.singleShot(0, self._ciz)
 
 class KaraTahtaCerceve(QWidget):
     """K-351: kara tahtanın ince ahşap çerçevesi, tebeşir oluğu ve silgisi (yalnız süs; dokunuşları alttaki tahtaya geçirir)."""

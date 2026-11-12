@@ -1,6 +1,7 @@
 import sys, os, time, datetime, base64, io, random, json
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
+tk.KELEBEK_URLS = []; tk.KELEBEK_FOTO_URLS = []
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer, QBuffer, QIODevice, QPoint
 from PyQt5.QtGui import QImage, QPainter, QColor

@@ -1,6 +1,7 @@
 import sys, subprocess, os, datetime, time
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
+tk.KELEBEK_URLS = []; tk.KELEBEK_FOTO_URLS = []
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer
 app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)

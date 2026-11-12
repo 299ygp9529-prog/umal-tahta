@@ -1,6 +1,7 @@
 import sys, os, time, datetime, base64, io, random, json
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
+tk.KELEBEK_URLS = []; tk.KELEBEK_FOTO_URLS = []   # gerçek okul verisi sanal tahtaya inmez
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer, QBuffer, QIODevice, QPoint
 from PyQt5.QtGui import QImage, QPainter, QColor
@@ -56,5 +57,5 @@ def a1():
     print('scroll çocukları (üstte olanlar):', [(type(c).__name__, c.geometry().getRect()) for c in w.scroll.children() if isinstance(c, tk.QWidget) and c.isVisible()][-6:])
     print('dönüşte ekran görünür:', es is not None and es.isVisible(), '| pencere etkin:', w.isActiveWindow(), '| exposed:', w.windowHandle().isExposed())
     print('duyuru açık mı:', w._acik_mi('kelebek_duyuru') if hasattr(w, '_acik_mi') else '-')
-    import subprocess; subprocess.run(['import', '-window', 'root', '/tmp/onizleme/sinav-yerleri.png']); print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
+    print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
 QTimer.singleShot(2500, a1); app.exec_()

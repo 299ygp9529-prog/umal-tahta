@@ -9812,21 +9812,26 @@ class DbsEkran(QDialog):
                 else: q.setPen(QColor('#9fb3cc')); q.setFont(font(30, True)); q.drawText(QRectF(0, 0, W, H - bar), Qt.AlignCenter, 'Bu sınıf için öğrenci listesi yok.')
             except Exception as ex: print('dbs çizim:', ex)
             rects = dict(self.seat_rects); no_sira = {s_: n for n, s_ in self.yer.items()}
+            def foto_r(c):   # karttaki fotoğrafın yeri (_draw_seatmap ile aynı hesap): rozetler ad yazısının üstüne binmesin
+                if not BOARD_PHOTOS: return QRectF(c.right() - 70*k, c.y() + 2*k, 66*k, c.height() - 4*k)
+                pw_ = min((c.height() - 10*k)*.77, c.width()*.45); ph_ = pw_/.77
+                return QRectF(c.x() + 5*k, c.y() + (c.height() - ph_)/2, pw_, ph_)
             if self.kitapcik and lay:   # A / B: yan yana ve ön-arka komşular farklı
                 xs = sorted({d[0] for d in lay['desks']}); ys = sorted({d[1] for d in lay['desks']})
                 for x_, y_, w_, ns in lay['desks']:
                     for j, s_ in enumerate(ns):
                         c = rects.get(s_)
                         if c is None: continue
-                        a = (xs.index(x_)*2 + j + ys.index(y_)) % 2 == 0; r_ = QRectF(c.right() - 34*k, c.y() + 4*k, 30*k, 30*k)
+                        a = (xs.index(x_)*2 + j + ys.index(y_)) % 2 == 0; fr = foto_r(c); r_ = QRectF(fr.right() - 30*k, fr.y() + 2*k, 28*k, 28*k)
                         q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff' if a else '#ffe14d')); q.drawEllipse(r_); q.setPen(QColor('#06202a')); q.setFont(font(19, True)); q.drawText(r_, Qt.AlignCenter, 'A' if a else 'B')
             if self.duzenle:   # işaretler yalnız düzenlerken görünür
                 kisa = {'tek': 'TEK', 'on': 'ÖN', 'arka': 'ARKA DEĞİL'}
                 for s_, c in rects.items():
                     isr = self.isaret.get(no_sira.get(s_), ())
                     if not isr: continue
-                    yz = ' · '.join(kisa[a] for a, _ in DBS_ISARET if a in isr); f_ = font(13, True); tw = QFontMetrics(f_).horizontalAdvance(yz) + 14*k
-                    r_ = QRectF(c.right() - tw - 4*k, c.bottom() - 26*k, tw, 22*k); q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff')); q.drawRoundedRect(r_, 6*k, 6*k)
+                    yz = ' · '.join(kisa[a] for a, _ in DBS_ISARET if a in isr); fr = foto_r(c); f_ = font(13, True)
+                    while f_.pixelSize() > 8 and QFontMetrics(f_).horizontalAdvance(yz) > fr.width() - 6*k: f_.setPixelSize(f_.pixelSize() - 1)
+                    r_ = QRectF(fr.x(), fr.bottom() - 22*k, fr.width(), 22*k); q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff')); q.drawRoundedRect(r_, 6*k, 6*k)
                     q.setPen(QColor('#06202a')); q.setFont(f_); q.drawText(r_, Qt.AlignCenter, yz)
             q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 240)); q.drawRect(QRectF(0, H - bar - pay, W, bar + pay))
             dr = QRectF(30*k, H - bar - pay, max(60, getattr(self, 'sol_sinir', W) - 50*k), bar); yz = self.durum_yazisi(); f_ = font(24, True)

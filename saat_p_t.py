@@ -19,6 +19,6 @@ def a2():
     p.bolumler[0][0].setChecked(True)
 def a3():
     sa = [x for x in w.findChildren(tk.QWidget) if hasattr(x, '_kadran') and hasattr(x, 'tik')]
-    print('Akıllı araçlar açık → saat:', [(x.width(), x.height(), x.isVisible()) for x in sa]); cek('2-acik'); app.quit()
+    print('Akıllı araçlar açık → saat:', [(x.width(), x.height(), x.isVisible()) for x in sa]); cek('2-acik'); print('düğmeler:', [(b.text().strip(), b.width(), b.fontMetrics().horizontalAdvance(b.text()) + 22 + 20) for b in pn[0].bolumler[0][1].findChildren(tk.QPushButton)]); app.quit()
 for t, f in ((1500, a1), (4000, a2), (5200, a3)): QTimer.singleShot(t, f)
 app.exec_()

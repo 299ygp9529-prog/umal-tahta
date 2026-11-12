@@ -12655,7 +12655,7 @@ class YeniPanel(QWidget):
     def bolum(self, ad, ikon, ogeler, lay):
         b = QPushButton('  ' + ad + '   ˅'); b.setObjectName('bolum'); b.setIcon(tool_icon(ikon)); b.setIconSize(QSize(22, 22)); b.setCheckable(True)
         b.setFocusPolicy(Qt.NoFocus); b.setMinimumHeight(44); lay.addWidget(b)
-        ic = self.izgara(ogeler, 2); ic.hide(); lay.addWidget(ic)
+        ic = ogeler if isinstance(ogeler, QWidget) else self.izgara(ogeler, 2); ic.hide(); lay.addWidget(ic)
         def ac(acik, b=b, ic=ic):
             for b2, ic2 in self.bolumler:   # aynı anda tek bölüm açık
                 if b2 is not b: b2.setChecked(False); ic2.hide(); b2.setText(b2.text().replace('˄', '˅'))
@@ -12688,7 +12688,12 @@ class YeniPanel(QWidget):
         self.bolumler = []; self.i_uclar = []
         self.i_perde = self.ic('Perde', 'Perde', lambda: m.curtain_button.click(), True); self.i_spot = self.ic('Spot', 'Spot ışığı', lambda: m.spot_button.click(), True)
         self.i_atlas = self.ic("Atlas'a sor", '', self.atlas_ac); self.i_atlas.setIcon(QIcon(ATLAS_PNG)); self.i_atlas.setIconSize(QSize(26, 26)); self.i_atlas.setToolTip("Atlas'a sor: Atlas yanda açılır")   # K-480
-        self.bolum('Akıllı araçlar', 'Perde', [self.i_perde, self.i_spot, self.ic('Alkış', 'Alkış', m.celebrate), self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink), self.i_atlas], l)
+        # K-485: beş düğme iki satırda (üstte 3, altta 2) — üçüncü satır panel saatini küçültüyordu
+        i_alkis = self.ic('Alkış', 'Alkış', m.celebrate); aw = QWidget(); ag = QGridLayout(aw); ag.setContentsMargins(0, 0, 0, 0); ag.setSpacing(6)
+        for n_, b_ in enumerate((self.i_perde, self.i_spot, i_alkis)): b_.setText(' ' + b_.text().strip()); ag.addWidget(b_, 0, n_*2, 1, 2)
+        ag.addWidget(self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink), 1, 0, 1, 3); ag.addWidget(self.i_atlas, 1, 3, 1, 3)
+        for c_ in range(6): ag.setColumnStretch(c_, 1)
+        self.bolum('Akıllı araçlar', 'Perde', aw, l)
         self.satir('Günün soruları', 'Günün soruları', m.open_daily, l)   # K-373: ana panelde
         oy = QPushButton('  Oyunlar'); oy.setObjectName('oyun'); oy.setIcon(tool_icon('Oyunlar', '#04202a')); oy.setIconSize(QSize(22, 22)); oy.setMinimumHeight(44)
         oy.setFocusPolicy(Qt.NoFocus); oy.setToolTip('Oyunlar: satranç, dama, tavla, mangala, XOX'); oy.clicked.connect(lambda checked=False: m.open_games()); l.addWidget(oy)   # K-372: öğrenciler görsün

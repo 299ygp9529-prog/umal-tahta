@@ -5667,6 +5667,10 @@ class Window(QMainWindow):
             except Exception as e: print('sinav plani:', e)
             try: self.foto_gonder()
             except Exception as e: print('foto:', e)
+    def _acik_mi(self, ad):
+        w_ = getattr(self, ad, None)
+        try: return w_ is not None and w_.isVisible()
+        except RuntimeError: return False   # silinmiş pencere
     def kelebek_duyuru_denetle(self):
         """K-492: kelebek'e yeni (bugünkü ya da ileri tarihli) bir sınav dağılımı geldiyse sınıf tahtasında bir kez tam ekran duyuru.
         Gösterilenler data_dir/kelebek-duyuru.json'da; yazarken, sınav saatinde ya da başka tam ekran açıkken bekler."""
@@ -5682,7 +5686,8 @@ class Window(QMainWindow):
             if not yeni: return
             st = exam_now(self.exam_clock(), getattr(self, 'exams', None))
             mesgul = (st and st.get('phase') in ('before', 'during')) or kalem_mesgul(self) or getattr(self, '_sinav_su_an', False) \
-                or any(getattr(getattr(self, a_, None), 'isVisible', lambda: False)() for a_ in ('acil', 'kelebek_duyuru', 'anma_ekrani'))
+                or QApplication.activeModalWidget() is not None \
+                or any(self._acik_mi(a_) for a_ in ('acil', 'kelebek_duyuru', 'anma_ekrani', 'exam_screen', 'karargah', 'games', 'anket_screen', 'anket_canli', 'proje_screen', 'rastgele_screen', 'salons', 'intro'))
             if mesgul: QTimer.singleShot(20000, self.kelebek_duyuru_denetle); return
             pl = sorted(yeni, key=lambda x: (str(x.get('tarih')), str(x.get('ders'))))[0]
             gor.add('%s|%s|%s' % (pl.get('tarih'), pl.get('ders'), pl.get('sinav')))

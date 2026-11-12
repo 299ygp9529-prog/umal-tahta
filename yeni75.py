@@ -1799,7 +1799,11 @@ class HavuzDialog(QDialog):
         if not files:
             empty = QLabel('Havuzda henüz PDF yok. "Havuza PDF ekle" ile ilk dosyayı ekleyin; birkaç dakika içinde bütün tahtalarda görünür.')
             empty.setWordWrap(True); lay.addWidget(empty)
-        for name in files:
+        testler = [n for n in files if n.startswith('Test - ')]; digerleri = [n for n in files if not n.startswith('Test - ')]   # K-510: paneldeki testler ayrı başlıkta
+        sirali = ([('📝 Testler (panelde hazırlananlar)', None)] + [(n, 1) for n in testler] + ([("Diğer PDF'ler", None)] if digerleri else []) if testler else []) + [(n, 1) for n in digerleri]
+        for name, dosya in sirali:
+            if dosya is None:
+                h = QLabel(name); h.setStyleSheet('font-size:16px;font-weight:800;color:#7ff6ff;padding:8px 2px 2px;'); lay.addWidget(h); continue
             line = QHBoxLayout(); line.setSpacing(6)
             size = os.path.getsize(os.path.join(HAVUZ_DIR, name)) / 1048576
             b = QPushButton('%s   ·   %s MB' % (os.path.splitext(name)[0], ('%.1f' % size).replace('.', ','))); b.setIcon(tool_icon('PDF aç'))
@@ -5435,6 +5439,7 @@ class Window(QMainWindow):
         self.anma_timer = QTimer(self); self.anma_timer.timeout.connect(self.anma_denetle); self.anma_timer.start(5000); self.anma_ekrani = None   # K-402
         self.exam_timer.timeout.connect(self.acil_ust)   # K-341: sınav / anket ekranından sonra: acil mesaj hep en üstte
         self.hava_timer = QTimer(self); self.hava_timer.timeout.connect(self.hava_denetle); self.hava_timer.start(30000); QTimer.singleShot(25000, self.hava_denetle)   # K-497: son derste hava durumu
+        self.test_timer = QTimer(self); self.test_timer.timeout.connect(self.test_havuz_tick); self.test_timer.start(240000); QTimer.singleShot(70000, self.test_havuz_tick)   # K-510: paneldeki testler → PDF Havuzu (yalnız Öğretmenler odası)
         self.watch_screens()
     # ---- Çözünürlük değişince (bazı tahtalarda kendiliğinden değişiyor) pencereler yeni ekrana oturur ----
     def watch_screens(self):
@@ -5695,6 +5700,44 @@ class Window(QMainWindow):
             self.board.finish(); self.kelebek_duyuru = KelebekDuyuru(self, pl); self.kelebek_duyuru.show(); self.kelebek_duyuru.raise_()
             if len(yeni) > 1: QTimer.singleShot(1000, self.kelebek_duyuru_denetle)   # birden çok yeni sınav: sıradaki, bu kapanınca
         except Exception as e: print('kelebek duyuru:', e)
+    def test_havuz_tick(self):
+        """K-510: Öğretmenler odası tahtası, panelde "Havuza gönder" denen testleri indirip ~/PDF Havuzu'na koyar; havuz eşitleyici Drive'a ve
+        bütün tahtalara dağıtır. Dört dakikada bir, arka planda, yazarken beklemeli; ekran iş parçacığı yalnız bayrağa bakar."""
+        try:
+            if self.board_info().get('sinif') != 'Öğretmenler odası': return
+            if getattr(self, '_test_yeni', 0): self._test_yeni = 0; self.run_havuz('--hemen')
+            import datetime
+            if getattr(self, '_test_iniyor', False) or kalem_mesgul(self) or not (6 <= datetime.datetime.now().hour < 23): return
+            self._test_iniyor = True
+            import threading; threading.Thread(target=self.test_havuz_indir, daemon=True).start()
+            QTimer.singleShot(90000, lambda: (getattr(self, '_test_yeni', 0) and (setattr(self, '_test_yeni', 0), self.run_havuz('--hemen'))))   # indirildiyse havuz hemen eşitlesin
+        except Exception as e: print('test havuz:', e)
+    def test_havuz_indir(self):
+        import urllib.request, urllib.parse, re
+        try:
+            liste = yonetim_istek('/rest/v1/rpc/umal_testler_bekleyen', {'p_anahtar': YONETIM_ANAHTAR}, timeout=30) or []
+            if not liste: return
+            os.makedirs(HAVUZ_DIR, exist_ok=True); n = 0
+            for t in liste[:10]:
+                ad = re.sub(r'[\\/:*?"<>|\n\r\t]+', ' ', str(t.get('ad') or 'Test')).strip()[:110]
+                kim = re.sub(r'[\\/:*?"<>|\n\r\t()]+', ' ', str(t.get('hazirlayan') or '')).strip()[:40]
+                temel = 'Test - %s%s' % (ad, ' (%s)' % kim if kim else ''); hedef = os.path.join(HAVUZ_DIR, temel + '.pdf'); k = 2
+                while os.path.exists(hedef): hedef = os.path.join(HAVUZ_DIR, '%s (%d).pdf' % (temel, k)); k += 1
+                url = YONETIM_URL + '/storage/v1/object/public/umal-testler/' + urllib.parse.quote(str(t.get('yol') or ''))
+                gecici = os.path.join(HAVUZ_DIR, '.indiriliyor-' + os.path.basename(hedef))
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'UMAL-Atlas'}), timeout=120) as r: veri = r.read(60 * 1048576)
+                    if not veri.startswith(b'%PDF'): raise ValueError('PDF değil')
+                    with open(gecici, 'wb') as f: f.write(veri)
+                    os.replace(gecici, hedef)
+                    yonetim_istek('/rest/v1/rpc/umal_test_havuzda', {'p_anahtar': YONETIM_ANAHTAR, 'p_id': t.get('id'), 'p_ad': os.path.basename(hedef)}, timeout=30); n += 1
+                except Exception as e:
+                    print('test indir:', t.get('id'), e)
+                    try: os.remove(gecici)
+                    except OSError: pass
+            if n: self._test_yeni = n   # bir sonraki tıkta havuz eşitleyici hemen çalışır
+        except Exception as e: print('test havuz:', e)
+        finally: self._test_iniyor = False
     def hava_son_ders(self, now):
         """K-497: bu sınıfın bugünkü son dersi (ders programından); bulunamazsa zil çizelgesinin son dersi (8.)."""
         sinif = str(self.board_info().get('sinif') or ''); son = None
@@ -6098,6 +6141,7 @@ class Window(QMainWindow):
         out = anket_for_board(self.anket_defs(), sinif, now.date().isoformat(), self.anket_kontrol())
         # K-330: yalnız seçilen derslerde; "sınıfın hepsi doldurunca kapansın"
         out = [a for a in out if anket_ders_uygun(a, now) and not (a.get('otokapat') and anket_tamam(a, sinif, self.anket_answers(a)))]
+        out = [a for a in out if (a.get('bolum') or 'anket') != 'rehberlik']   # K-498: rehberliğin mahrem formları tahtada açılmaz; öğrenci panelinden (umalatlas.com.tr/ogrenci) doldurulur
         return out if bolum is None else [a for a in out if (a.get('bolum') or 'anket') == bolum]
     def ayrilan_yukle(self):
         """K-333: DersMap'te okuldan ayrıldı denenlerin numaraları (tahtada fotoğrafı ve listede adı gizlenir)."""
@@ -15946,7 +15990,7 @@ class HavaKart(QWidget):
             f_ = sigdir(u, 32, True, ru.width() - 36*k); p.setFont(f_); p.setPen(QColor('#ffe14d')); p.drawText(ru, Qt.AlignCenter, u)
             p.setFont(font(13)); p.setPen(QColor('#6f86a6')); p.drawText(QRectF(x, 216*k, sag - x, 22*k), Qt.AlignLeft | Qt.AlignVCenter, 'Kapatmak için dokunun')
         else:
-            p.setFont(font(15)); p.setPen(QColor('#6f86a6')); p.drawText(QRectF(x, 124*k, sag - x, 26*k), Qt.AlignLeft | Qt.AlignVCenter, 'İyi akşamlar · kapatmak için dokunun')
+            p.setFont(font(15)); p.setPen(QColor('#6f86a6')); p.drawText(QRectF(x, 124*k, sag - x, 26*k), Qt.AlignLeft | Qt.AlignVCenter, 'İyi günler · kapatmak için dokunun')
         p.end(); return pm
 
 class AcilMesaj(QWidget):

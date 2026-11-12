@@ -15882,7 +15882,7 @@ class HavaKart(QWidget):
     def yerlestir(self):
         r_ = self.parentWidget().rect(); W, H = r_.width(), r_.height(); k = min(W/1600, H/900) or 1   # Window.width bir QSpinBox
         if self.oz.get('kotu'): w, h = int(900*k), int(250*k); self.setGeometry((W - w)//2, int(H*.10), w, h)
-        else: w, h = int(560*k), int(170*k); self.setGeometry(W - w - int(40*k), int(110*k), w, h)
+        else: w, h = int(560*k), int(170*k); self.setGeometry(W - w - int(40*k), int(200*k), w, h)   # köşe saatinin altında
         self._on = None
     def paintEvent(self, e):
         p = QPainter(self)
@@ -15899,7 +15899,7 @@ class HavaKart(QWidget):
                 a = i*math.pi/4; p.drawLine(QPointF(x + math.cos(a)*rr*1.35, y + math.sin(a)*rr*1.35), QPointF(x + math.cos(a)*rr*1.75, y + math.sin(a)*rr*1.75))
             p.setPen(Qt.NoPen); p.setBrush(QColor('#ffd23f')); p.drawEllipse(QPointF(x, y), rr, rr)
         def bulut(x, y, w, renk):
-            pa = QPainterPath(); pa.addEllipse(QRectF(x - w*.5, y - w*.05, w*.42, w*.42)); pa.addEllipse(QRectF(x - w*.25, y - w*.32, w*.52, w*.52))
+            pa = QPainterPath(); pa.setFillRule(Qt.WindingFill); pa.addEllipse(QRectF(x - w*.5, y - w*.05, w*.42, w*.42)); pa.addEllipse(QRectF(x - w*.25, y - w*.32, w*.52, w*.52))
             pa.addEllipse(QRectF(x + w*.08, y - w*.12, w*.42, w*.42)); pa.addRoundedRect(QRectF(x - w*.5, y + w*.08, w, w*.29), w*.14, w*.14)
             p.setPen(QPen(QColor('#ffffff'), max(1.5, w*.02))); p.setBrush(QColor(renk)); p.drawPath(pa.simplified())
         if tur == 'gunes': gunes(cx, cy, s*.22); return

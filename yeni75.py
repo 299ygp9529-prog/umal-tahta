@@ -1192,10 +1192,9 @@ def _x11_klavye_gizle(pidler):
         X.XGetWindowProperty.argtypes = [vp, ul, ul, ctypes.c_long, ctypes.c_long, ctypes.c_int, ul, ctypes.POINTER(ul), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ul), ctypes.POINTER(ul), ctypes.POINTER(vp)]
         X.XGetWindowAttributes.argtypes = [vp, ul, vp]; X.XUnmapWindow.argtypes = [vp, ul]; X.XFree.argtypes = [vp]; X.XFlush.argtypes = [vp]; X.XSync.argtypes = [vp, ctypes.c_int]; X.XCloseDisplay.argtypes = [vp]
         HT = ctypes.CFUNCTYPE(ctypes.c_int, vp, vp); X.XSetErrorHandler.restype = vp; X.XSetErrorHandler.argtypes = [HT]
-        _SK_X[0] = (X, HT(lambda d, e: 0))   # kapanmış pencere hatası süreci düşürmesin
-    X, yut = _SK_X[0]; ul = ctypes.c_ulong
-    X.XSetErrorHandler(yut)
-    d = X.XOpenDisplay(None)
+        yut_ = HT(lambda d, e: 0); X.XSetErrorHandler(yut_)   # kapanmış pencere hatası süreci düşürmesin
+        _SK_X[0] = [X, yut_, X.XOpenDisplay(None)]   # bağlantı açık tutulur (her taramada yeniden açılmaz)
+    X, yut, d = _SK_X[0]; ul = ctypes.c_ulong
     if not d: return 0
     say = 0
     try:
@@ -1225,13 +1224,18 @@ def _x11_klavye_gizle(pidler):
                         continue
                 if derinlik < 2 and pid != ben: gez(c, derinlik + 1)
         gez(X.XDefaultRootWindow(d), 0); X.XSync(d, 0)
-    finally: X.XCloseDisplay(d)
+    except Exception:
+        _SK_X[0][2] = None; raise
     return say
 def sistem_klavyesini_gizle():
     """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
     yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
     import subprocess, threading
     if os.environ.get('UMAL_SISTEM_KLAVYE') == '1': return
+    try:   # K-484: asıl yol — xdotool gerekmez; ana iş parçacığında (Xlib iş parçacığı güvenli değil), birkaç ms
+        n_ = _x11_klavye_gizle(_SK_PID[1])
+        if n_: print('sistem klavyesi gizlendi (x11)', n_)
+    except Exception as e_: print('x11 klavye gizle:', e_)
     if _SK_IS[0] is not None and _SK_IS[0].is_alive(): return
     def calis():
         ids = set(); xdo = bool(shutil.which('xdotool')) and os.environ.get('UMAL_XDOTOOL_YOK') != '1'
@@ -1254,10 +1258,6 @@ def sistem_klavyesini_gizle():
                     if int(d_) != os.getpid() and _re.search(r'(keyboard|klavye|onboard|florence|squeekboard)', c_.split(' ')[0] + ' ' + ' '.join(c_.split(' ')[1:3])): pid_.append(d_)
             except OSError: pass
             _SK_PID[:] = [time.time(), pid_]
-        try:   # K-484: asıl yol — xdotool gerekmez
-            n_ = _x11_klavye_gizle(_SK_PID[1])
-            if n_: print('sistem klavyesi gizlendi (x11)', n_)
-        except Exception as e_: print('x11 klavye gizle:', e_)
         for pd_ in _SK_PID[1] if xdo else ():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', pd_], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass

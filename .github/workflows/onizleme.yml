@@ -37,16 +37,12 @@ jobs:
           PY
           grep -c "sanal tahta" /usr/lib/umal-tahta/umal-havuz
           mkdir -p /root/.local/share/umal-tahta && echo '{"sinif": "9-A"}' > /root/.local/share/umal-tahta/tahta.json
-      - name: Grafik canlandirma
+      - name: Atlas kenar
         run: |
-          mkdir -p /tmp/onizleme
+          mkdir -p /tmp/onizleme; cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
-          : > /tmp/olcum.txt
-          for ad in eski yeni; do
-            cp ${ad}75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-            DISPLAY=:7 timeout 90 python3 grafik_t.py $ad 2>&1 | grep -v XDG | tail -8 >> /tmp/olcum.txt || echo "hata $ad" >> /tmp/olcum.txt
-          done
+          DISPLAY=:7 timeout 120 python3 atlas_t.py 2>&1 | grep -v XDG | tail -25 > /tmp/olcum.txt || echo "hata" >> /tmp/olcum.txt
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

@@ -5434,6 +5434,7 @@ class Window(QMainWindow):
         self.exam_timer = QTimer(self); self.exam_timer.timeout.connect(self.exam_tick); self.exam_timer.start(1000); QTimer.singleShot(0, self.exam_tick)
         self.anma_timer = QTimer(self); self.anma_timer.timeout.connect(self.anma_denetle); self.anma_timer.start(5000); self.anma_ekrani = None   # K-402
         self.exam_timer.timeout.connect(self.acil_ust)   # K-341: sınav / anket ekranından sonra: acil mesaj hep en üstte
+        self.hava_timer = QTimer(self); self.hava_timer.timeout.connect(self.hava_denetle); self.hava_timer.start(30000); QTimer.singleShot(25000, self.hava_denetle)   # K-497: son derste hava durumu
         self.watch_screens()
     # ---- Çözünürlük değişince (bazı tahtalarda kendiliğinden değişiyor) pencereler yeni ekrana oturur ----
     def watch_screens(self):
@@ -5694,6 +5695,56 @@ class Window(QMainWindow):
             self.board.finish(); self.kelebek_duyuru = KelebekDuyuru(self, pl); self.kelebek_duyuru.show(); self.kelebek_duyuru.raise_()
             if len(yeni) > 1: QTimer.singleShot(1000, self.kelebek_duyuru_denetle)   # birden çok yeni sınav: sıradaki, bu kapanınca
         except Exception as e: print('kelebek duyuru:', e)
+    def hava_son_ders(self, now):
+        """K-497: bu sınıfın bugünkü son dersi (ders programından); bulunamazsa zil çizelgesinin son dersi (8.)."""
+        sinif = str(self.board_info().get('sinif') or ''); son = None
+        for n in range(1, 9):
+            try:
+                if lesson_cell(sinif, now.weekday(), n): son = n
+            except Exception: pass
+        return exam_span(now.weekday(), '%d. Ders' % (son or 8))
+    def hava_denetle(self):
+        """K-497: günün son dersinin son 5 dakikasında bir kez hava durumu kartı. Veri günde birkaç kez arka planda iner (birkaç KB)."""
+        import datetime
+        try:
+            if not class_grade(self.board_info().get('sinif')): return
+            now = datetime.datetime.now()
+            if now.weekday() >= 5 or not (7 <= now.hour < 17): return
+            yol = os.path.join(self.data_dir, 'hava.json'); bugun = now.date().isoformat()
+            hv = getattr(self, '_hava', None)
+            if hv is None:
+                try:
+                    with open(yol, encoding='utf-8') as f: hv = json.load(f)
+                except (OSError, ValueError): hv = {}
+                self._hava = hv
+            if (hv.get('tarih') != bugun or time.time() - float(hv.get('t', 0)) > 3*3600) and not getattr(self, '_hava_iniyor', False) \
+                    and time.time() - getattr(self, '_hava_dene', 0) > 900 and not kalem_mesgul(self):
+                self._hava_iniyor = True; self._hava_dene = time.time(); import threading; threading.Thread(target=self.hava_indir, args=(yol, bugun), daemon=True).start()
+            sp = self.hava_son_ders(now); t = now.hour*3600 + now.minute*60 + now.second
+            if not sp or not (sp[1] - 300 <= t < sp[1] + 60) or getattr(self, '_hava_gor', None) == bugun: return
+            if hv.get('tarih') != bugun or not hv.get('saatler'): return
+            st = exam_now(self.exam_clock(), getattr(self, 'exams', None))
+            if (st and st.get('phase') in ('before', 'during')) or kalem_mesgul(self) or getattr(self, '_sinav_su_an', False) or QApplication.activeModalWidget() is not None \
+                    or any(self._acik_mi(a_) for a_ in ('acil', 'kelebek_duyuru', 'hava_kart', 'anma_ekrani', 'exam_screen', 'karargah', 'games', 'anket_screen', 'anket_canli', 'proje_screen', 'rastgele_screen', 'salons', 'intro')):
+                return   # 30 sn sonra yine bakılır
+            oz = hava_ozet([tuple(s) for s in hv['saatler']], sp[1]//3600)
+            if not oz: return
+            self._hava_gor = bugun
+            self.hava_kart = HavaKart(self, oz, (sp[1] + 120 - t)*1000); self.hava_kart.show(); self.hava_kart.raise_()
+        except Exception as e: print('hava:', e)
+    def hava_indir(self, yol, bugun):
+        import urllib.request
+        try:
+            for tur, url in HAVA_URLS:
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'UMAL-Atlas/1 (okul tahtasi)'}), timeout=15) as r: veri = json.loads(r.read(400000).decode('utf-8'))
+                    sa = hava_cozumle(tur, veri)
+                    if not sa: continue
+                    hv = dict(tarih=bugun, t=time.time(), kaynak=tur, saatler=sa)
+                    with open(yol + '.tmp', 'w', encoding='utf-8') as f: json.dump(hv, f)
+                    os.replace(yol + '.tmp', yol); self._hava = hv; return
+                except Exception as e: print('hava indir:', tur, e)
+        finally: self._hava_iniyor = False
     def foto_gonder(self):
         """Öğretmenler odası: kelebek fotoğraf paketi değişince öğrenci fotoğrafları DersMap'e (yalnız yeni/değişenler gider)."""
         if self.board_info().get('sinif') != 'Öğretmenler odası': return
@@ -15765,6 +15816,137 @@ class KelebekDuyuru(QWidget):
         f2 = font(34, True); tw = QFontMetrics(f2).horizontalAdvance(tt) + 70*k; r_ = QRectF(W/2 - tw/2, y, tw, 66*k)
         p.setPen(QPen(QColor('#ffe14d'), 2.5*k)); p.setBrush(QColor(40, 30, 4, 200)); p.drawRoundedRect(r_, 18*k, 18*k); yaz(r_, tt, f2, '#ffe14d'); y += 100*k
         yaz(QRectF(0, y, W, 56*k), 'Yerlerinize bakabilirsiniz', font(38), '#c9d6ea')
+        p.end(); return pm
+
+# --- K-497: son derste hava durumu kartı ---
+HAVA_YER = (41.03, 29.12)   # Ümraniye
+HAVA_URLS = (
+    ('om', 'https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,weather_code,wind_speed_10m&timezone=Europe%%2FIstanbul&forecast_days=1' % HAVA_YER),
+    ('mn', 'https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=%.2f&lon=%.2f' % HAVA_YER))
+def hava_cozumle(tur, veri):
+    """Servis yanıtını saatlik listeye çevirir: [(yerel saat, sıcaklık, hissedilen, yağış %, yağış mm, WMO kodu, rüzgâr km/s)]."""
+    import datetime
+    out = []
+    if tur == 'om':
+        h = veri['hourly']
+        for i, t in enumerate(h['time']):
+            if not str(t).startswith(datetime.date.today().isoformat()): continue
+            g = lambda k, d=0: (h.get(k) or [d]*len(h['time']))[i] if (h.get(k) or [None]*len(h['time']))[i] is not None else d
+            out.append((int(str(t)[11:13]), float(g('temperature_2m')), float(g('apparent_temperature', g('temperature_2m'))), float(g('precipitation_probability')),
+                        float(g('precipitation')), int(g('weather_code')), float(g('wind_speed_10m'))))
+    else:
+        for r in veri['properties']['timeseries']:
+            z = datetime.datetime.fromisoformat(r['time'].replace('Z', '+00:00')).astimezone()
+            if z.date() != datetime.date.today(): continue
+            d = r['data']['instant']['details']; n1 = r['data'].get('next_1_hours') or {}
+            sym = str((n1.get('summary') or {}).get('symbol_code', '')); mm = float((n1.get('details') or {}).get('precipitation_amount', 0) or 0)
+            kod = 95 if 'thunder' in sym else 71 if ('snow' in sym or 'sleet' in sym) else 80 if 'showers' in sym else 61 if 'rain' in sym else 45 if 'fog' in sym \
+                else 3 if sym.startswith('cloudy') else 2 if 'partly' in sym else 1 if 'fair' in sym else 0
+            sic = float(d.get('air_temperature', 0)); rz = float(d.get('wind_speed', 0))*3.6
+            out.append((z.hour, sic, sic - (rz/10 if sic < 12 else 0), 80.0 if mm >= .2 else (40.0 if kod >= 51 else 5.0), mm, kod, rz))
+    return out
+_HAVA_AD = [((95, 99), 'Gök gürültülü sağanak', 'firtina'), ((85, 86), 'Kar sağanağı', 'kar'), ((71, 77), 'Kar yağışlı', 'kar'), ((80, 82), 'Sağanak yağışlı', 'yagmur'),
+            ((61, 67), 'Yağmurlu', 'yagmur'), ((51, 57), 'Çiseleyen yağmur', 'yagmur'), ((45, 48), 'Sisli', 'sis'), ((3, 3), 'Kapalı', 'bulut'),
+            ((2, 2), 'Parçalı bulutlu', 'parcali'), ((1, 1), 'Az bulutlu', 'parcali'), ((0, 0), 'Açık', 'gunes')]
+def _hava_ad(kod):
+    return next(((a, i) for (x, y), a, i in _HAVA_AD if x <= kod <= y), ('Bulutlu', 'bulut'))
+def hava_ozet(saatler, cikis):
+    """Çıkış saatinden akşama (20.00) özet: sıcaklık, durum, uyarı. Kötü hava (yağış, kar, fırtına, sert rüzgâr, çok soğuk/sıcak) kotu=True."""
+    if not saatler: return None
+    sira = sorted(saatler); simdi = next((s for s in sira if s[0] >= cikis), sira[-1]); aksam = [s for s in sira if cikis <= s[0] <= 20] or [simdi]
+    agir = lambda k: 6 if k >= 95 else 5 if k in (71, 73, 75, 77, 85, 86) else 4 if k >= 61 else 3 if k >= 51 else 1 if k in (45, 48) else 0
+    en = max(aksam, key=lambda s: (agir(s[5]) if (s[3] >= 40 or s[4] >= .2 or agir(s[5]) >= 5) else 0, s[3]))
+    ad, ikon = _hava_ad(simdi[5]); yp = max(s[3] for s in aksam); rz = max(s[6] for s in aksam); his = min(s[2] for s in aksam[:3])
+    o = dict(sicaklik=round(simdi[1]), his=round(simdi[2]), durum=ad, ikon=ikon, yagis=int(round(yp)), ruzgar=int(round(rz)), kotu=False, uyari='')
+    yagiyor = agir(en[5]) >= 3 and (en[3] >= 50 or en[4] >= .3)
+    if agir(en[5]) == 6 and (en[3] >= 40 or en[4] >= .2): o.update(kotu=True, ikon='firtina', uyari='Gök gürültülü sağanak var, dikkatli olun')
+    elif yagiyor and agir(en[5]) == 5: o.update(kotu=True, ikon='kar', uyari='Kar yağışı var, sıkı giyinin, dikkatli yürüyün')
+    elif yagiyor:
+        o.update(kotu=True, ikon='yagmur', uyari=('Çıkışta yağmur var' if en is simdi or en[0] - cikis <= 1 else 'Akşama yağmur bekleniyor') + ', şemsiyenizi unutmayın')
+    elif rz >= 40: o.update(kotu=True, uyari='Sert rüzgâr var, dikkatli olun')
+    elif his <= 3: o.update(kotu=True, uyari='Hava çok soğuk, sıkı giyinin')
+    elif simdi[1] >= 33: o.update(kotu=True, uyari='Hava çok sıcak, bol su için')
+    return o
+
+class HavaKart(QWidget):
+    """K-497: günün son dersinde hava durumu. Bir kez çizilip saklanır; dokununca ya da ders bitince kapanır.
+    Sakin günde köşede küçük kart; kötü havada büyük uyarı kartı (tam ekranı kaplamaz)."""
+    def __init__(self, main, oz, kapanis_ms=300000):
+        super().__init__(main); self.main = main; self.oz = oz; self._on = None
+        self.setAttribute(Qt.WA_DeleteOnClose); self.setAttribute(Qt.WA_TranslucentBackground)
+        QTimer.singleShot(max(20000, int(kapanis_ms)), self.kapat); self.yerlestir()
+    def kapat(self):
+        try: self.close()
+        except RuntimeError: pass
+    def mousePressEvent(self, e): self.kapat()
+    def yerlestir(self):
+        pw = self.parentWidget(); W, H = pw.width(), pw.height(); k = min(W/1600, H/900) or 1
+        if self.oz.get('kotu'): w, h = int(900*k), int(250*k); self.setGeometry((W - w)//2, int(H*.10), w, h)
+        else: w, h = int(560*k), int(170*k); self.setGeometry(W - w - int(40*k), int(110*k), w, h)
+        self._on = None
+    def paintEvent(self, e):
+        p = QPainter(self)
+        if self._on is None or self._on.size() != self.size(): self._on = self.ciz(self.width(), self.height())
+        p.drawPixmap(0, 0, self._on); p.end()
+    @staticmethod
+    def ikon(p, r, tur, k):
+        from PyQt5.QtGui import QPainterPath
+        cx, cy, s = r.center().x(), r.center().y(), min(r.width(), r.height())
+        def gunes(x, y, rr):
+            p.setPen(QPen(QColor('#ffd23f'), max(2, rr*.16), Qt.SolidLine, Qt.RoundCap))
+            import math
+            for i in range(8):
+                a = i*math.pi/4; p.drawLine(QPointF(x + math.cos(a)*rr*1.35, y + math.sin(a)*rr*1.35), QPointF(x + math.cos(a)*rr*1.75, y + math.sin(a)*rr*1.75))
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#ffd23f')); p.drawEllipse(QPointF(x, y), rr, rr)
+        def bulut(x, y, w, renk):
+            pa = QPainterPath(); pa.addEllipse(QRectF(x - w*.5, y - w*.05, w*.42, w*.42)); pa.addEllipse(QRectF(x - w*.25, y - w*.32, w*.52, w*.52))
+            pa.addEllipse(QRectF(x + w*.08, y - w*.12, w*.42, w*.42)); pa.addRoundedRect(QRectF(x - w*.5, y + w*.08, w, w*.29), w*.14, w*.14)
+            p.setPen(QPen(QColor('#ffffff'), max(1.5, w*.02))); p.setBrush(QColor(renk)); p.drawPath(pa.simplified())
+        if tur == 'gunes': gunes(cx, cy, s*.22); return
+        if tur == 'parcali': gunes(cx - s*.14, cy - s*.14, s*.17); bulut(cx + s*.06, cy + s*.04, s*.62, '#dfe9f5'); return
+        if tur == 'sis':
+            bulut(cx, cy - s*.12, s*.6, '#b9c6d6'); p.setPen(QPen(QColor('#9fb3cc'), s*.045, Qt.SolidLine, Qt.RoundCap))
+            for i in range(3): p.drawLine(QPointF(cx - s*.32 + i*s*.04, cy + s*.22 + i*s*.09), QPointF(cx + s*.32 - i*s*.04, cy + s*.22 + i*s*.09))
+            return
+        koyu = tur in ('yagmur', 'kar', 'firtina'); bulut(cx, cy - s*.1, s*.66, '#9fb3cc' if koyu else '#dfe9f5')
+        if tur == 'yagmur':
+            p.setPen(QPen(QColor('#22e8ff'), s*.05, Qt.SolidLine, Qt.RoundCap))
+            for i in range(4): x = cx - s*.24 + i*s*.16; p.drawLine(QPointF(x, cy + s*.24), QPointF(x - s*.05, cy + s*.38))
+        elif tur == 'kar':
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#ffffff'))
+            for i in range(4): p.drawEllipse(QPointF(cx - s*.24 + i*s*.16, cy + s*.3 + (i % 2)*s*.07), s*.04, s*.04)
+        elif tur == 'firtina':
+            pa = QPainterPath(QPointF(cx + s*.02, cy + s*.18)); [pa.lineTo(QPointF(cx + dx*s, cy + dy*s)) for dx, dy in ((-.1, .34), (0, .34), (-.06, .48), (.1, .28), (0, .28), (.06, .18))]
+            p.setPen(Qt.NoPen); p.setBrush(QColor('#ffd23f')); p.drawPath(pa)
+    def ciz(self, W, H):
+        from PyQt5.QtGui import QFont, QFontMetrics
+        oz = self.oz; kotu = oz.get('kotu'); k = H/(250 if kotu else 170)
+        fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+        def font(px, b=False):
+            f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setBold(b); return f
+        def sigdir(t, px, b, gen):
+            f = font(px, b)
+            while f.pixelSize() > 11 and QFontMetrics(f).horizontalAdvance(t) > gen: f.setPixelSize(f.pixelSize() - 1)
+            return f
+        pm = QPixmap(W, H); pm.fill(Qt.transparent); p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.TextAntialiasing)
+        vurgu = QColor('#ffd23f') if kotu else QColor('#22e8ff'); r = QRectF(3*k, 3*k, W - 6*k, H - 6*k)
+        p.setPen(QPen(vurgu, 3*k)); p.setBrush(QColor(11, 26, 48, 245)); p.drawRoundedRect(r, 24*k, 24*k)
+        ik = 150 if kotu else 120; self.ikon(p, QRectF(18*k, (H - ik*k)/2, ik*k, ik*k), oz.get('ikon'), k)
+        x = (18 + ik + 14)*k; sag = W - 26*k
+        p.setFont(font(15, True)); p.setPen(QColor('#9fb3cc')); p.drawText(QRectF(x, 16*k, sag - x, 26*k), Qt.AlignLeft | Qt.AlignVCenter, 'ÇIKIŞTA HAVA · ÜMRANİYE')
+        ts = '%d°' % oz.get('sicaklik', 0); ft = font(64 if kotu else 58, True); tw = QFontMetrics(ft).horizontalAdvance(ts)
+        p.setFont(ft); p.setPen(QColor('#ffffff')); p.drawText(QRectF(x, 40*k, tw + 4, 76*k), Qt.AlignLeft | Qt.AlignVCenter, ts)
+        x2 = x + tw + 18*k
+        p.setFont(sigdir(oz.get('durum', ''), 30, True, sag - x2)); p.setPen(QColor('#7ff6ff')); p.drawText(QRectF(x2, 44*k, sag - x2, 38*k), Qt.AlignLeft | Qt.AlignVCenter, oz.get('durum', ''))
+        alt = 'Hissedilen %d° · Yağış %%%d · Rüzgâr %d km/s' % (oz.get('his', 0), oz.get('yagis', 0), oz.get('ruzgar', 0))
+        p.setFont(sigdir(alt, 18, False, sag - x2)); p.setPen(QColor('#c9d6ea')); p.drawText(QRectF(x2, 82*k, sag - x2, 30*k), Qt.AlignLeft | Qt.AlignVCenter, alt)
+        if kotu:
+            u = oz.get('uyari', ''); ru = QRectF(x, 136*k, sag - x, 74*k)
+            p.setPen(QPen(QColor('#ffd23f'), 2*k)); p.setBrush(QColor(40, 30, 4, 220)); p.drawRoundedRect(ru, 16*k, 16*k)
+            f_ = sigdir(u, 32, True, ru.width() - 36*k); p.setFont(f_); p.setPen(QColor('#ffe14d')); p.drawText(ru, Qt.AlignCenter, u)
+            p.setFont(font(13)); p.setPen(QColor('#6f86a6')); p.drawText(QRectF(x, 216*k, sag - x, 22*k), Qt.AlignLeft | Qt.AlignVCenter, 'Kapatmak için dokunun')
+        else:
+            p.setFont(font(15)); p.setPen(QColor('#6f86a6')); p.drawText(QRectF(x, 124*k, sag - x, 26*k), Qt.AlignLeft | Qt.AlignVCenter, 'İyi akşamlar · kapatmak için dokunun')
         p.end(); return pm
 
 class AcilMesaj(QWidget):

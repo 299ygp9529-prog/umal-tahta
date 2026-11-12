@@ -6238,7 +6238,13 @@ class Window(QMainWindow):
         """K-474: Atlas paneli kenardayken çerçeveye alınan soru, tahtanın kalan alanına sığacak kadar büyütülür ve ortalanır."""
         try:
             pn = getattr(self, 'atlas_panel', None); c = getattr(pn, 'hedef', None)   # K-479: yalnız bu sorunun kendi bölgesi (eski bir çerçeve değil)
-            if not c or c[0] != id(self.doc) or c[1] != self.page or pn is None or not pn.isVisible() or pn.tam or pn.resim is None: return
+            if pn is None or not pn.isVisible() or pn.tam: return
+            if not c or c[0] != id(self.doc) or c[1] != self.page or pn.resim is None:
+                # çözüm alanında (yazarak sorulsa bile) soru kartı panelin altında kalmasın
+                o_ = getattr(self, 'solution_origin', None); c = None
+                if o_ and o_.get('card') and ((self.doc.metadata or {}).get('keywords') or '') == 'UMAL-solution':
+                    c_ = o_['card']; c = (id(self.doc), self.page, QRectF(c_[0] - 10, c_[1] - 10, c_[2] - c_[0] + 20, c_[3] - c_[1] + 20))
+                if not c: return
             if getattr(self.board, 'active', None) is not None: return   # yazarken dokunma
             r = c[2]; vp = self.scroll.viewport(); gen = vp.width()
             try:   # K-479: panel görünür alanın üstüne biniyorsa yalnız açıkta kalan genişlik sayılır
@@ -11635,16 +11641,23 @@ def draw_anket_list(p, W, H, k, font, a, sinif, answers, bottom):
         r = QRectF(30*k + (i % cols)*(cw + gap), top + (i//cols)*(ch + gap), cw, ch); dn = no in cev
         p.setPen(QPen(QColor('#2fbf71'), 3*k) if dn else Qt.NoPen); p.setBrush(QColor(255, 255, 255, 16)); p.drawRoundedRect(r, 12*k, 12*k)
         ph = QRectF(r.x() + 7*k, r.y() + 7*k, r.width() - 14*k, r.height() - 46*k)
+        pw_ = min(ph.width(), ph.height()*0.78)   # K-481: fotoğraf dik (vesikalık) oranında durur; baş/çene kesilmez
+        ph = QRectF(ph.center().x() - pw_/2, ph.y(), pw_, ph.height())
         draw_photo(p, ph, no, ad, k)
         if dn or not ok:
             p.setPen(Qt.NoPen); p.setBrush(QColor(13, 23, 38, 150 if dn else 200)); p.drawRoundedRect(ph, 6*k, 6*k)
-        text(QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k, 34*k), QFontMetrics(fN).elidedText(ad, Qt.ElideRight, int(r.width() - 10*k)), fN, '#ffffff' if ok else '#6f8099', Qt.AlignCenter)
+        fn_ = fN; nr = QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k, 36*k)   # K-481: ad kesilmez — sığmazsa küçülür, yine sığmazsa iki satır
+        for b_ in (15, 14, 13, 12):
+            fn_ = fN if b_ == 15 else font(b_, True)
+            if QFontMetrics(fn_).horizontalAdvance(ad) <= nr.width() - 4: break
+        else: fn_ = font(11, True)
+        text(nr, ad, fn_, '#ffffff' if ok else '#6f8099', Qt.AlignCenter | Qt.TextWordWrap)
         if dn:
             c_ = QRectF(r.right() - 46*k, r.y() + 8*k, 38*k, 38*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#2fbf71')); p.drawEllipse(c_)
             p.setPen(QPen(QColor('#06240f'), 4.5*k)); x0, y0 = c_.x(), c_.y()   # tik (yazı tipinden bağımsız)
             p.drawLine(QPointF(x0 + 10*k, y0 + 20*k), QPointF(x0 + 17*k, y0 + 27*k)); p.drawLine(QPointF(x0 + 17*k, y0 + 27*k), QPointF(x0 + 29*k, y0 + 12*k))
         if not ok:
-            b = QRectF(ph.x() + 6*k, ph.center().y() - 14*k, ph.width() - 12*k, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#0b1422')); p.drawRoundedRect(b, 7*k, 7*k)
+            b = QRectF(r.x() + 8*k, ph.center().y() - 14*k, r.width() - 16*k, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#0b1422')); p.drawRoundedRect(b, 7*k, 7*k)
             text(b, 'Katılmıyor', font(14, True), '#c9d6ea', Qt.AlignCenter)
         rects[(no, ad, ok)] = r
     # alt şerit: ilerleme
@@ -12621,11 +12634,19 @@ class YeniPanel(QWidget):
         l.addWidget(self.izgara([self.t_kalem, self.i_neon, self.t_fos, self.t_sil, self.t_tasi, self.t_sek, self.t_sec, self.i_kareli, self.i_postit]))
         self.bolumler = []; self.i_uclar = []
         self.i_perde = self.ic('Perde', 'Perde', lambda: m.curtain_button.click(), True); self.i_spot = self.ic('Spot', 'Spot ışığı', lambda: m.spot_button.click(), True)
-        self.bolum('Akıllı araçlar', 'Perde', [self.i_perde, self.i_spot, self.ic('Alkış', 'Alkış', m.celebrate), self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink)], l)
+        self.i_atlas = self.ic("Atlas'a sor", '', self.atlas_ac); self.i_atlas.setIcon(QIcon(ATLAS_PNG)); self.i_atlas.setIconSize(QSize(26, 26)); self.i_atlas.setToolTip("Atlas'a sor: Atlas yanda açılır")   # K-480
+        self.bolum('Akıllı araçlar', 'Perde', [self.i_perde, self.i_spot, self.ic('Alkış', 'Alkış', m.celebrate), self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink), self.i_atlas], l)
         self.satir('Günün soruları', 'Günün soruları', m.open_daily, l)   # K-373: ana panelde
         oy = QPushButton('  Oyunlar'); oy.setObjectName('oyun'); oy.setIcon(tool_icon('Oyunlar', '#04202a')); oy.setIconSize(QSize(22, 22)); oy.setMinimumHeight(44)
         oy.setFocusPolicy(Qt.NoFocus); oy.setToolTip('Oyunlar: satranç, dama, tavla, mangala, XOX'); oy.clicked.connect(lambda checked=False: m.open_games()); l.addWidget(oy)   # K-372: öğrenciler görsün
         l.addStretch(1); return s
+    def atlas_ac(self):
+        """K-480: Akıllı araçlar → Atlas'a sor: Atlas'ın yandaki paneli açılır (açıksa öne gelir)."""
+        m = self.m
+        if getattr(m, '_sinav_su_an', False): m.show_toast("Sınav saatinde Atlas'a sor kapalı."); return
+        pn = getattr(m, 'atlas_panel', None)
+        if pn is not None and pn.isVisible(): pn.raise_(); return
+        m.atlas_sor_ac()
     def satir(self, ad, ikon, fn, lay, secilir=False):
         b = QPushButton('  ' + ad); b.setObjectName('bolum'); b.setIcon(tool_icon(ikon)); b.setIconSize(QSize(22, 22)); b.setMinimumHeight(44)
         b.setCheckable(secilir); b.setFocusPolicy(Qt.NoFocus); b.clicked.connect(lambda checked=False, f=fn: f()); lay.addWidget(b); return b
@@ -12728,6 +12749,7 @@ class AtlasYuzen(QWidget):
     def __init__(self, main):
         super().__init__(main.scroll); self.main = main; self.setFixedSize(self.BOY, self.BOY); self.setAttribute(Qt.WA_TranslucentBackground)
         self.maskot = AtlasMaskot(self); self.maskot.setGeometry(8, 6, self.BOY - 16, self.BOY - 12); self.maskot.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.maskot.dur = main.kalem_yaziyor   # K-482
         self.etiket = QLabel("Atlas'a sor", main.scroll); self.etiket.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.etiket.setStyleSheet('QLabel{background:rgba(8,20,40,235);color:#7ff6ff;border:2px solid #22e8ff;border-radius:16px;padding:6px 16px;font-size:20px;font-weight:800;}')
         self.etiket.adjustSize(); self.etiket.hide()
@@ -13001,6 +13023,11 @@ class AtlasMaskot(QWidget):
     def showEvent(self, e): self.zaman.start(); super().showEvent(e)
     def hideEvent(self, e): self.zaman.stop(); super().hideEvent(e)
     def tik(self):
+        d = getattr(self, 'dur', None)   # K-482: kalem yazarken maskot canlanmaz (ekran her 40 ms'de yeniden boyanmasın)
+        if d is not None:
+            try:
+                if d(): return
+            except Exception: pass
         h = self.IFADE[self.ad]; self.su = [a + (b - a)*0.18 for a, b in zip(self.su, h)]; self.update()
     def paintEvent(self, e):
         if self.govde.isNull(): return
@@ -13632,7 +13659,7 @@ class AtlasPanel(QFrame):
         from PyQt5.QtWidgets import QTextBrowser
         v = QVBoxLayout(self); v.setContentsMargins(18, 14, 18, 14); v.setSpacing(10)
         ust = QHBoxLayout(); ust.setSpacing(10)
-        self.maskot = AtlasMaskot(self); self.maskot.setFixedSize(150, 152); ust.addWidget(self.maskot)
+        self.maskot = AtlasMaskot(self); self.maskot.setFixedSize(150, 152); ust.addWidget(self.maskot); self.maskot.dur = getattr(self.main, 'kalem_yaziyor', None)
         bas = QVBoxLayout(); bas.setSpacing(2)
         t = QLabel('Atlas'); t.setStyleSheet('font-size:30px;font-weight:800;color:#7ff6ff;'); bas.addWidget(t); self.baslik = t
         self.ders = QLabel(''); self.ders.setStyleSheet('font-size:17px;color:#9fb3cc;'); bas.addWidget(self.ders)

@@ -54,7 +54,6 @@ def a1():
     n = len(olc['es']); es.update(); bekle(300); a_ = len(olc['es']) - n; n = len(olc['es']); es.repaint(); b_ = len(olc['es']) - n
     print('update sonrası boyama', a_, '| repaint sonrası', b_, '| updatesEnabled', es.updatesEnabled(), w.updatesEnabled(), w.scroll.updatesEnabled(), '| görünür bölge', es.visibleRegion().boundingRect().getRect(), '| modal', QApplication.activeModalWidget(), '| üst pencereler', [(type(t).__name__, t.isVisible()) for t in QApplication.topLevelWidgets() if t.isVisible()])
     print('scroll çocukları (üstte olanlar):', [(type(c).__name__, c.geometry().getRect()) for c in w.scroll.children() if isinstance(c, tk.QWidget) and c.isVisible()][-6:])
-    print('neon anim', es.ara_btn._neon.state() if hasattr(es, 'ara_btn') else None, '| anim_timer', hasattr(es, 'anim_timer') and es.anim_timer.isActive())
     print('dönüşte ekran görünür:', es is not None and es.isVisible(), '| pencere etkin:', w.isActiveWindow(), '| exposed:', w.windowHandle().isExposed())
     import subprocess; subprocess.run(['import', '-window', 'root', '/tmp/onizleme/sinav-yerleri.png']); print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
 QTimer.singleShot(2500, a1); app.exec_()

@@ -1467,8 +1467,13 @@ def neon_button(parent, on_click, font_px=22):
     b.setStyleSheet('QPushButton{background:rgba(8,14,30,0.92);color:#7ff6ff;border:3px solid #22e8ff;border-radius:18px;padding:0 30px;font-size:%dpx;font-weight:800;}'
                     'QPushButton:pressed{background:#0d2a3a;}' % font_px)
     fx = QGraphicsDropShadowEffect(b); fx.setColor(QColor(34, 232, 255)); fx.setOffset(0, 0); fx.setBlurRadius(30); b.setGraphicsEffect(fx)
-    a = QVariantAnimation(b); a.setStartValue(16.0); a.setKeyValueAt(0.5, 44.0); a.setEndValue(16.0); a.setDuration(2200); a.setLoopCount(-1)
-    a.valueChanged.connect(lambda v: fx.setBlurRadius(float(v))); a.start(); b._neon = a
+    # K-493: ışıma eskiden saniyede ~60 kez yeniden bulanıklaştırılıyor, her seferinde arkasındaki tam ekranı da boyatıyordu (sınav yerleri ekranı donuyordu).
+    # Artık saniyede 4 adım: aynı nefes alan ışıma, on beşte bir yük; düğme görünmüyorken hiç çalışmaz.
+    t = QTimer(b); t.setInterval(250)
+    def adim():
+        if not b.isVisible(): return
+        f = (time.monotonic() % 2.2)/2.2; fx.setBlurRadius(16.0 + 28.0*(1 - abs(2*f - 1)))
+    t.timeout.connect(adim); t.start(); b._neon = t
     return b
 
 OFFICE_EXTS = ('.pptx', '.ppt', '.ppsx', '.pps', '.odp', '.docx', '.doc', '.odt', '.rtf', '.pptm', '.potx')
@@ -8390,7 +8395,6 @@ class ExamScreen(QWidget):
     def __init__(self, main):
         super().__init__(main.scroll); self.main = main; self.st = None; self.grade = None
         self.setAttribute(Qt.WA_StyledBackground, False)
-        self.setAttribute(Qt.WA_OpaquePaintEvent, True)   # K-493: ekranın tamamını kendi boyar; altındaki tahta sayfası boşuna yeniden çizilmez
         self.hide_btn = QPushButton('Gizle', self); self.hide_btn.setFocusPolicy(Qt.NoFocus); self.hide_btn.setMinimumHeight(46)
         self.hide_btn.setStyleSheet('QPushButton{background:rgba(255,255,255,0.10);color:#c9d6ea;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:0 18px;font-size:17px;}')
         self.hide_btn.clicked.connect(main.hide_exam)
@@ -8903,7 +8907,6 @@ class KarargahScreen(QWidget):
     def __init__(self, main):
         super().__init__(main); self.main = main; self.ex = None; self.detail = None; self.manual = False; self.tiles = {}
         self.absent = set(); self.seat_rects = {}
-        self.setAttribute(Qt.WA_OpaquePaintEvent, True)   # K-493: tamamını kendi boyar (altındaki pencere yeniden çizilmez)
         def btn(t, f, prim=False):
             b = QPushButton(t, self); b.setFocusPolicy(Qt.NoFocus); b.setMinimumHeight(52); b.clicked.connect(f)
             b.setStyleSheet('QPushButton{background:%s;color:white;border:1px solid %s;border-radius:12px;padding:0 24px;font-size:19px;font-weight:600;}'

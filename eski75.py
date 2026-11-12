@@ -448,6 +448,7 @@ def make_board(background='white', width=960, height=540):
     doc.set_metadata({'title':APP_NAME,'keywords':'UMAL-board:'+background})
     return doc
 
+_CIZIM_ONB = {}   # K-456: id(çizgi) -> (parmak izi, çokgen, yol); çizgi değişince parmak izi tutmaz, yeniden hesaplanır
 def nib_outline(stroke):
     """Same directional nib geometry for the screen and vector PDF export."""
     if stroke.get('w') and len(stroke['w']) == len(stroke['points']): return fluid_outline(stroke)
@@ -1169,6 +1170,7 @@ def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 
 SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
 _SK_IS = [None]
+_SK_PID = [0, []]
 def sistem_klavyesini_gizle():
     """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
     yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
@@ -1180,11 +1182,33 @@ def sistem_klavyesini_gizle():
         for kip in ('--classname', '--class', '--name'):
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
+        for kip in ('--classname', '--class'):   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
+        # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
+        import re as _re
+        if time.time() - _SK_PID[0] > 30:
+            pid_ = []
+            try:
+                for d_ in os.listdir('/proc'):
+                    if not d_.isdigit(): continue
+                    try:
+                        with open('/proc/%s/cmdline' % d_, 'rb') as f_: c_ = f_.read(400).replace(b'\0', b' ').decode('utf-8', 'replace').lower()
+                    except OSError: continue
+                    if int(d_) != os.getpid() and _re.search(r'(keyboard|klavye|onboard|florence|squeekboard)', c_.split(' ')[0] + ' ' + ' '.join(c_.split(' ')[1:3])): pid_.append(d_)
+            except OSError: pass
+            _SK_PID[:] = [time.time(), pid_]
+        for pd_ in _SK_PID[1]:
+            try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', pd_], capture_output=True, text=True, timeout=2).stdout.split())
+            except Exception: pass
         ben = os.getpid()
         for i in ids:
             try:
                 if int(subprocess.run(['xdotool', 'getwindowpid', i], capture_output=True, text=True, timeout=2).stdout.strip() or 0) == ben: continue
                 subprocess.run(['xdotool', 'windowunmap', i], capture_output=True, timeout=2); print('sistem klavyesi gizlendi', i)
+            except Exception: pass
+        if ids and shutil.which('dbus-send'):   # K-461: ETA klavyesinin kendi 'gizle' çağrısı (varsa; yoksa etkisiz)
+            try: subprocess.run(['dbus-send', '--session', '--type=method_call', '--dest=org.eta.virtualkeyboard', '/VirtualKeyboard', 'org.eta.virtualkeyboard.hide'], capture_output=True, timeout=2)
             except Exception: pass
     _SK_IS[0] = threading.Thread(target=calis, daemon=True); _SK_IS[0].start()
 
@@ -1561,7 +1585,7 @@ def sistem_olcum():
         with open('/proc/meminfo') as f:
             for l in f:
                 k, v = l.split(':', 1); mi[k] = int(v.split()[0])
-        out.update(bellek_mb=round(mi.get('MemTotal', 0)/1024), bos_mb=round(mi.get('MemAvailable', 0)/1024), takas_mb=round((mi.get('SwapTotal', 0) - mi.get('SwapFree', 0))/1024))
+        out.update(atlas_mb=round(_bellek_kb()[2]/1024), bellek_bosaltma=_BELLEK_SON[1], bellek_mb=round(mi.get('MemTotal', 0)/1024), bos_mb=round(mi.get('MemAvailable', 0)/1024), takas_mb=round((mi.get('SwapTotal', 0) - mi.get('SwapFree', 0))/1024))
     except (OSError, ValueError): pass
     try:
         with open('/proc/loadavg') as f: out['yuk'] = float(f.read().split()[0])
@@ -2535,20 +2559,27 @@ class Board(QWidget):
                 p.drawRect(r)
             return
         p.setOpacity(.3 if s['tool'] == 'highlight' else 1)
-        outline = nib_outline(s)
-        if outline:
+        pts = s['points']
+        fp_ = (len(pts), tuple(pts[0]) if pts else (), tuple(pts[-1]) if pts else (), s.get('width'), s.get('nib'), s['tool'], len(s.get('w') or ()))
+        oc_ = _CIZIM_ONB.get(id(s))
+        if oc_ is None or oc_[0] != fp_:   # K-456: çizginin çokgeni / yolu bir kez hesaplanır (her ekran çiziminde Python'da baştan değil)
+            ol_ = nib_outline(s)
+            oc_ = (fp_, QPolygonF([QPointF(*pt) for pt in ol_]) if ol_ else None, None if ol_ or len(pts) < 2 else stroke_path(pts))
+            if len(_CIZIM_ONB) > 6000: _CIZIM_ONB.clear()   # K-461: silinmiş çizgilerin kaydı birikmesin
+            _CIZIM_ONB[id(s)] = oc_
+        if oc_[1] is not None:
             p.setPen(Qt.NoPen); p.setBrush(QColor(s['color']))
-            p.drawPolygon(QPolygonF([QPointF(*pt) for pt in outline]),Qt.WindingFill)
+            p.drawPolygon(oc_[1], Qt.WindingFill)
             if s.get('w'):   # Akıcı: round, tapered ends
                 for i in (0, -1):
                     r = max(.25, s['width']/2*s['w'][i]); p.drawEllipse(QPointF(*s['points'][i]), r, r)
             p.setBrush(Qt.NoBrush)
             return
-        pts = s['points']; passes = style_passes(s)
-        if passes: paint_passes(p, stroke_path(pts), passes, rect, self.devicePixelRatioF()); return
+        passes = style_passes(s)
+        if passes: paint_passes(p, oc_[2] if oc_[2] is not None else stroke_path(pts), passes, rect, self.devicePixelRatioF()); return
         p.setPen(stroke_pen(s))
         if len(pts) == 1: p.drawPoint(QPointF(*pts[0]))
-        else: p.drawPath(stroke_path(pts))
+        else: p.drawPath(oc_[2] if oc_[2] is not None else stroke_path(pts))
     # --- Hazır sayfa görüntüsü: her yeni çizgide eski çizgiler yeniden çizilmez -------
     def mark_key(self):
         o = self.owner; ms = o.marks.get(o.page, [])
@@ -3507,12 +3538,54 @@ def page_number_dialog(parent, count, current):
     return int(value[0]) if dialog.exec_()==QDialog.Accepted and value[0] else None
 
 SAYFA_OB = {}; SAYFA_OB_SINIR = 256*1024*1024   # K-440: çizilmiş sayfa görüntüleri (en çok ~256 MB; en eski atılır)
+def _bellek_kb():
+    """(toplam, boş, Atlas'ın kullandığı) kB; okunamazsa 0."""
+    t = b = r = 0
+    try:
+        with open('/proc/meminfo') as f:
+            for l in f:
+                if l.startswith('MemTotal:'): t = int(l.split()[1])
+                elif l.startswith('MemAvailable:'): b = int(l.split()[1]); break
+        with open('/proc/self/statm') as f: r = int(f.read().split()[1])*4
+    except (OSError, ValueError, IndexError): pass
+    return t, b, r
+try:   # K-461: sayfa önbelleği tahtanın belleğine göre (toplam belleğin 1/24'ü; 48–256 MB)
+    _t = _bellek_kb()[0]
+    if _t: SAYFA_OB_SINIR = int(max(48, min(256, _t/1024/24))*1024*1024)
+except Exception: pass
+def bellek_bosalt(neden=''):
+    """K-461: yeniden üretilebilen her şey bırakılır (sayfa görüntüleri, çizgi çokgenleri, açılmış fotoğraflar, Qt resim önbelleği) ve
+    boşalan bellek sisteme geri verilir. Hiçbir yazı / kayıt silinmez; gereken şey ilk kullanımda yeniden hazırlanır."""
+    try:
+        SAYFA_OB.clear(); _CIZIM_ONB.clear(); _PHOTOS['pix'].clear()
+        from PyQt5.QtGui import QPixmapCache; QPixmapCache.clear()
+        import gc; gc.collect()
+        import ctypes, ctypes.util
+        ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6').malloc_trim(0)
+        print('bellek boşaltıldı:', neden)
+    except Exception as e: print('bellek boşalt:', e)
+_BELLEK_SON = [0.0, 0]
+def bellek_bekcisi(window):
+    """K-461: 20 sn'de bir: tahtanın boş belleği azaldıysa (< 400 MB ya da toplamın %12'si) ya da Atlas çok büyüdüyse (> 900 MB ya da toplamın %35'i)
+    önbellekler boşaltılır. Yazarken beklenir; en sık 2 dakikada bir."""
+    try:
+        if getattr(window.board, 'active', None) is not None or time.time() - _BELLEK_SON[0] < 120: return
+        t, b, r = _bellek_kb()
+        if not t: return
+        dar = b and b < max(400*1024, t*.12); buyuk = r > min(900*1024, t*.35)
+        if dar or buyuk:
+            _BELLEK_SON[0] = time.time(); _BELLEK_SON[1] += 1
+            for ad in ('exam_screen', 'karargah'):
+                w_ = getattr(window, ad, None)
+                if w_ is not None and hasattr(w_, '_sm_cache') and not w_.isVisible(): w_._sm_cache = None
+            bellek_bosalt('boş %d MB · Atlas %d MB' % (b//1024, r//1024))
+    except Exception as e: print('bellek bekçisi:', e)
 class Window(QMainWindow):
     @property
     def doc(self): return self.__dict__.get('_doc')
     @doc.setter
     def doc(self, d):   # K-440: belge değişti → sayfa önbelleği, yeni belge kaydedilip adı belli olana kadar kullanılmaz
-        self.__dict__['_doc'] = d; self.__dict__['_sayfa_ob_gecerli'] = False
+        self.__dict__['_doc'] = d; self.__dict__['_sayfa_ob_gecerli'] = False; _CIZIM_ONB.clear()   # K-461: eski belgenin çizgi çokgenleri bırakılır
     def sayfa_gorseli(self, page, scale, clip):
         """K-440: sayfanın çizilmiş görüntüsü. Aynı belge + sayfa + ölçek daha önce çizildiyse bellekten gelir (geri dönülen sayfa,
         aynı yakınlaştırma, geri açılan sekme beklemez). Anahtar oturum belgesinin adıdır: belge her değiştiğinde yeni ad alır."""
@@ -5625,7 +5698,7 @@ class Window(QMainWindow):
         out.sort(key=lambda x: (x[1][0][0] if x[1] else (datetime.date.max, 0), x[0].get('ad', '')))
         return out[:6]
     def open_ara(self):
-        self.board.finish(); OgrenciAraDialog(self).exec_()
+        self.board.finish(); OgrenciAraDialog(self).exec_(); bellek_topla()
     def open_deneme(self):
         self.board.finish(); DenemeDialog(self).exec_()
     def seat_plan(self, st):
@@ -5876,6 +5949,7 @@ class Window(QMainWindow):
         if yeni != AYRILAN:
             AYRILAN.clear(); AYRILAN.update(yeni)
             for no in yeni: _PHOTOS['pix'].pop(no, None)
+            _PHOTOS['surum'] = _PHOTOS.get('surum', 0) + 1   # K-460: oturma planı yeni fotoğrafla yeniden çizilsin
             self.update()
     def anket_sayim(self):
         """Kontenjanlı sorular: okul genelindeki seçim sayıları (DersMap, dakikada bir)."""
@@ -6220,6 +6294,11 @@ class Window(QMainWindow):
         self.yok_send(st, plan)
     def yok_confirm(self, st, plan):
         self.yok_state(st)['onay'] = True; self.yok_send(st, plan)
+        def tekrar(st_=dict(st), plan_=plan):   # K-463: onay kesin ulaşsın (bağlantı o an koptuysa 15 sn sonra bir kez daha)
+            try:
+                if self.yok_state(st_)['onay']: self.yok_send(st_, plan_)
+            except Exception as e: print('onay tekrar:', e)
+        QTimer.singleShot(15000, tekrar)
     def yok_send(self, st, plan, final=False):
         c = self.yok_state(st); pl = self.kelebek_plan(st['date'], st['lesson']) or {}; day = st['date'].isoformat()
         try: n = int(str(st['lesson']).split('.')[0])
@@ -6360,9 +6439,27 @@ class Window(QMainWindow):
         if m < 0: return {}
         if getattr(self, '_yok_all', (None, None))[0] != m:
             v = arka_dosya().json(path)
-            if v is None: return getattr(self, '_yok_all', (None, {}))[1] or {}
+            if v is None: return self.elle_ustune(getattr(self, '_yok_all', (None, {}))[1] or {})
             self._yok_all = (m, v)
-        return self._yok_all[1]
+        return self.elle_ustune(self._yok_all[1])
+    def elle_ustune(self, d):
+        """K-457: elle girilen yoklama, salon tahtası sonradan kendi kaydını Drive'a yazsa da Karargah'ta ve raporda geçerli kalır."""
+        e_ = self.elle_kayitlar()
+        if not e_: return d
+        out = dict(d)
+        for ad, v in e_.items():
+            if (out.get(ad) or {}).get('zaman', 0) <= v.get('zaman', 0) or (out.get(ad) or {}).get('kaynak') != 'panel': out[ad] = v
+        return out
+    def elle_kayitlar(self):
+        if getattr(self, '_elle', None) is None:   # açılışta bir kez diskten (bugünün kayıtları)
+            self._elle = {}
+            try:
+                bugun = time.strftime('%Y-%m-%d')
+                for n_ in os.listdir(self.yok_dir()):
+                    if n_.startswith('elle-' + bugun) and n_.endswith('.json'):
+                        with open(os.path.join(self.yok_dir(), n_), encoding='utf-8') as f: self._elle[n_[5:]] = json.load(f)
+            except (OSError, ValueError): pass
+        return self._elle
     def send_duyuru(self, metin, hedef, ex, extra=None):
         path = os.path.join(self.yok_dir(), 'duyuru.json')
         try:
@@ -6493,8 +6590,28 @@ class Window(QMainWindow):
         if isinstance(d, dict) and (d.get('tam_ekran') or not self.isFullScreen()) and time.time() - d.get('zaman', 0) < 120:
             self.showFullScreen(); QTimer.singleShot(100, self.fit_page)   # açılış animasyonu yok · K-396: tahta hep tam ekranla döner
         self.statusBar().showMessage('Yeni sürümle açıldı: ' + version_label())
+    def elle_yoklama_yaz(self, veri):
+        """K-457: elle girilen yoklama (Öğretmenler odası tahtası ya da Okul Paneli): Drive'a ve Sınav merkezine salon tahtasının yazdığı yoldan.
+        Ekranda hemen görünsün diye Karargah'ın yoklama listesine de konur."""
+        ad = '%s_%s_%s.json' % (veri.get('tarih'), veri.get('ders_no'), veri.get('salon'))
+        yol = os.path.join(self.yok_dir(), 'elle-' + ad)
+        try:
+            with open(yol + '.yeni', 'w', encoding='utf-8') as f: json.dump(veri, f, ensure_ascii=False)
+            os.replace(yol + '.yeni', yol)
+        except OSError as e: print('elle yoklama:', e); return
+        self.elle_kayitlar()[ad] = veri
+        self.run_havuz('--yoklama-yaz', yol)
+        try:   # K-462: sınav bittikten sonra girilen yoklama: Gelmeyenler PDF'i ve mazeret listesi yeniden hazırlanıp Drive'a gider
+            flag = os.path.join(self.yok_dir(), 'rapor-%s_%s.tamam' % (veri.get('tarih'), veri.get('ders_no')))
+            self.__dict__.setdefault('_rapor_tamam', set()).discard(flag)
+            if os.path.exists(flag): os.remove(flag)
+        except OSError: pass
     def run_command(self, c):
-        if c.get('komut') == 'guncelle':   # Ayarlar'daki "Güncellemeyi denetle" ile aynı istek
+        if c.get('komut') == 'yoklama' and isinstance(c.get('yoklama'), dict):   # K-457: Okul Panelinden girilen yoklama → Drive (Öğretmenler odası tahtası yazar)
+            if self.board_info().get('sinif') in CLASS_PLACES:
+                v_ = dict(c['yoklama']); v_.setdefault('kaynak', 'panel')
+                if v_.get('tarih') and v_.get('salon') and v_.get('ders') and isinstance(v_.get('gelmedi'), list): self.elle_yoklama_yaz(v_)
+        elif c.get('komut') == 'guncelle':   # Ayarlar'daki "Güncellemeyi denetle" ile aynı istek
             try:
                 with open(UPDATE_REQUEST, 'w') as f: f.write(str(time.time()))
             except OSError: pass
@@ -7957,6 +8074,8 @@ def student_photo(no):
     if pm is None and no in d:
         import base64
         pm = QPixmap(); pm.loadFromData(base64.b64decode(d[no]), 'JPG'); _PHOTOS['pix'][no] = pm
+        if len(_PHOTOS['pix']) > 400:   # K-459: bellekte en çok 400 fotoğraf (en eski açılanlar atılır; gerekince yeniden açılır)
+            for k_ in list(_PHOTOS['pix'])[:100]: _PHOTOS['pix'].pop(k_, None)
     return pm
 BOARD_PHOTOS = True   # tahtalarda öğrenci fotoğrafları
 FOTO_GIZLI = {'101'}   # fotoğrafı hiçbir yerde gösterilmeyecek öğrenciler (okul no); yerine baş harfler
@@ -8182,6 +8301,9 @@ class ExamScreen(QWidget):
         st = self.st; plan = self.main.seat_plan(st) if st else None
         if st and plan and plan['tur'] == 'salon':
             self.main.yok_confirm(st, plan); self.update_yok_btn(); self.fx_kind = 'ok'; self.fx_t0 = time.monotonic(); self.start_fx(1.7)
+            self.onay_saat = time.strftime('%H.%M'); self.update()
+            try: self.main.show_toast('✓ Yoklama onaylandı ve gönderildi  ·  Gelmeyen: %d' % len(self.main.yok_state(st)['gelmedi']))
+            except Exception: pass
     def update_yok_btn(self):
         st = self.st; show = bool(st and self.yok_on)
         k_ = min(self.width()/1600, self.height()/900)
@@ -8191,9 +8313,9 @@ class ExamScreen(QWidget):
         self.yok_btn.setVisible(show)
         if not show: return
         done = self.main.yok_state(st)['onay']
-        self.yok_btn.setText('Onaylandı  ✓' if done else 'Yoklamayı onayla'); self.yok_btn.setEnabled(not done)
+        self.yok_btn.setText('✓  ONAYLANDI' if done else 'Yoklamayı onayla'); self.yok_btn.setEnabled(not done); self.yok_btn.raise_()
         self.yok_btn.setStyleSheet('QPushButton{background:%s;color:%s;border:none;border-radius:12px;padding:0 22px;font-size:19px;font-weight:700;}'
-                                   % (('#1f4d36', '#9fe3bd') if done else ('#2fbf71', '#06240f')))
+                                   % (('#0f7a45', '#ffffff') if done else ('#2fbf71', '#06240f')))   # K-463: onaylanınca parlak yeşil, beyaz yazı
         k = min(self.width()/1600, self.height()/900); h = int(46*k); self.yok_btn.setFixedHeight(h); self.yok_btn.adjustSize()
         self.yok_btn.move(int(self.width()/2 + 300*k), int(self.height() - 58*k))
     def seat_at(self, pos):
@@ -8237,7 +8359,7 @@ class ExamScreen(QWidget):
         for pl in (self.main.kelebek or {}).get('planlar', []):
             if pl.get('tarih') == day.isoformat() and pl.get('ders') == ders: lst = (pl.get('salonlar') or {}).get(salon); break
         if not lst: return
-        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_()
+        YerimDialog(self.main, dict(tur='salon', sinif=salon, liste=lst), ders, day, sira).exec_(); bellek_topla()
     def mouseReleaseEvent(self, e):
         self.press_timer.stop(); self.press_seat = None; e.accept()
     def start_fx(self, dur):
@@ -8377,7 +8499,11 @@ class ExamScreen(QWidget):
                 p.setBrush(QColor('#ffb020')); p.drawRoundedRect(QRectF(bn.x(), bn.y(), 230*k, bn.height()), 12*k, 12*k)
                 text(QRectF(bn.x(), bn.y(), 230*k, bn.height()), 'YOKLAMA  %s' % ms(max(0, yl)), 21, '#1a1206', True)
                 self.hb_items['yok'] = dict(rect=QRectF(bn.x(), bn.y(), 230*k, bn.height()), m=0, kind='box', text='YOKLAMA  %s' % ms(max(0, yl)), font=font(21, True), color='#ffb020', fg='#1a1206', k=k, bg='#0d1726', strip='#3b2a10', per=.6 if yl <= 300 else 1.0)
-                text(QRectF(bn.x() + 246*k, bn.y(), bn.width() - 260*k, bn.height()), ('Gelmeyenin fotoğrafına dokunun  ·  Gelmeyen: %d' if BOARD_PHOTOS else 'Gelmeyenin adına dokunun  ·  Gelmeyen: %d') % len(self.absent), 18, '#ffd78a', True, Qt.AlignLeft | Qt.AlignVCenter)
+                if self.main.yok_state(st)['onay']:   # K-463: onaylandıysa şerit yeşil ve açıkça yazar (öğretmen onayın geçtiğini görsün)
+                    yr = QRectF(bn.x() + 236*k, bn.y(), bn.width() - 236*k, bn.height()); p.setPen(Qt.NoPen); p.setBrush(QColor('#0f7a45')); p.drawRoundedRect(yr, 12*k, 12*k)
+                    text(yr.adjusted(12*k, 0, -8*k, 0), '✓ YOKLAMA ONAYLANDI%s  ·  Gelmeyen: %d  ·  değiştirmek için öğrenciye dokunun' % ((' ' + self.onay_saat) if getattr(self, 'onay_saat', '') else '', len(self.absent)), 17, '#ffffff', True, Qt.AlignLeft | Qt.AlignVCenter)
+                else:
+                    text(QRectF(bn.x() + 246*k, bn.y(), bn.width() - 260*k, bn.height()), ('Gelmeyenin fotoğrafına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın' if BOARD_PHOTOS else 'Gelmeyenin adına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın') % len(self.absent), 18, '#ffd78a', True, Qt.AlignLeft | Qt.AlignVCenter)
             e_ = time.monotonic() - getattr(self, 'anim_t0', -99)
             if kind == 'formul' and e_ < self.MATH_INTRO: self.draw_math_intro(p, W, H, k, font, theme, e_)
             p.end(); return
@@ -8611,6 +8737,9 @@ class KarargahScreen(QWidget):
         self.b_deneme.setStyleSheet('QPushButton{background:#3a1f12;color:#ffd9b8;border:1px solid #f06d0c;border-radius:12px;padding:0 24px;font-size:19px;font-weight:600;}')
         self.b_hide = btn('Gizle', self.main.close_karargah)
         self.b_back = btn('‹  Bütün salonlar', self.back, True); self.b_back.hide()
+        self.elle = None   # K-457: elle yoklama (gelmeyen sıra numaraları)
+        self.b_elle = btn('✎  Yoklama gir', self.elle_ac); self.b_elle.hide()
+        self.b_elle_ok = btn('Yoklamayı onayla ve kaydet', self.elle_kaydet, True); self.b_elle_ok.hide()
         self.note_bar = QFrame(self); self.note_bar.hide(); self.note_bar.setStyleSheet('QFrame{background:#ffb020;border-radius:14px;}')
         nl = QHBoxLayout(self.note_bar); nl.setContentsMargins(20, 10, 10, 10); nl.setSpacing(14)
         self.note_lbl = QLabel(self.note_bar); self.note_lbl.setWordWrap(True); self.note_lbl.setStyleSheet('QLabel{color:#1a1206;font-size:22px;font-weight:700;background:transparent;}')
@@ -8634,7 +8763,39 @@ class KarargahScreen(QWidget):
         self.b_ara.adjustSize(); self.b_ara.move((W - self.b_ara.width())//2, 12); self.b_ara.raise_()   # en üstte, ortada
         self.b_back.setVisible(self.detail is not None); self.b_back.adjustSize(); self.b_back.move(40, y)
         self.b_hide.adjustSize(); self.b_hide.move(W - self.b_hide.width() - 40, y)
-    def back(self): self.detail = None; self.relayout(); self.update()
+        bas_ = False
+        try:
+            if self.ex is not None:
+                now_ = self.main.exam_clock(); bas_ = now_.hour*3600 + now_.minute*60 + now_.second >= self.ex[3]
+        except Exception: bas_ = False
+        gor_ = self.detail is not None and bas_ and bool(self.ex and seat_layout(dict(tur='salon', sinif=self.detail, liste=self.ex[0].get('salonlar', {}).get(self.detail, []))))
+        if not gor_: self.elle = None
+        self.b_elle.setVisible(gor_); self.b_elle.setText('Vazgeç' if self.elle is not None else '✎  Yoklama gir'); self.b_elle.adjustSize()
+        self.b_elle.move(self.b_back.x() + self.b_back.width() + 16, y)
+        self.b_elle_ok.setVisible(gor_ and self.elle is not None)
+        if self.elle is not None: self.b_elle_ok.setText('Yoklamayı onayla ve kaydet  ·  Gelmeyen %d' % len(self.elle))
+        self.b_elle_ok.adjustSize(); self.b_elle_ok.move(self.b_elle.x() + self.b_elle.width() + 16, y)
+    def back(self): self.detail = None; self.elle = None; self.relayout(); self.update()
+    def elle_ac(self):
+        """K-457: tahtası bozuk / yoklama gelmeyen salon: Öğretmenler odasından gelmeyenler dokunarak işaretlenir."""
+        if self.elle is not None: self.elle = None
+        else:
+            y_ = self.info()[5].get(self.detail) or {}
+            self.elle = {int(r['sira']) for r in y_.get('gelmedi', []) if str(r.get('sira', '')).isdigit() or isinstance(r.get('sira'), int)}
+        self.relayout(); self.update()
+    def elle_kaydet(self):
+        if self.elle is None or not self.ex or self.detail is None: return
+        sal = self.detail; n_ = len(self.elle)
+        if QMessageBox.question(self, 'Yoklama', '%s salonu: %s. Yoklama onaylanıp kaydedilsin mi?' % (sal, ('%d öğrenci gelmedi' % n_) if n_ else 'herkes geldi')) != QMessageBox.Yes: return
+        pl, day, lesson, a, b = self.ex; lst = pl.get('salonlar', {}).get(sal, []); old = self.info()[5].get(sal) or {}
+        gel = [dict(r, ders_adi=tr_title(r.get('ders')) or exam_course(day.isoformat(), lesson, r.get('sinif'), pl.get('sinav', ''))) for r in sorted(lst, key=lambda r: r['sira']) if int(r['sira']) in self.elle]
+        try: no_ = str(int(str(lesson).split('.')[0]))
+        except ValueError: no_ = str(lesson).split('.')[0].strip()
+        veri = dict(tarih=day.isoformat(), ders=lesson, ders_no=no_, salon=sal, sinav=pl.get('sinav', ''), ogrenci=len(lst),
+                    gozetmen=old.get('gozetmen') or ([pl['gozcu'][sal]] if (pl.get('gozcu') or {}).get(sal) else []), onay=True, kapandi=True, zaman=time.time(),
+                    mesajlar=old.get('mesajlar', []), kaynak='panel', giren='Öğretmenler odası tahtası', gelmedi=gel)
+        self.main.elle_yoklama_yaz(veri); self.elle = None; self.relayout(); self.update()
+        self.main.show_toast('%s yoklaması kaydedildi · Gelmeyen %d' % (sal, n_))
     def read_ids(self):
         try:
             with open(os.path.join(self.main.yok_dir(), 'mesaj-okundu.json'), encoding='utf-8') as f: return set(json.load(f))
@@ -8674,6 +8835,11 @@ class KarargahScreen(QWidget):
         now = self.main.exam_clock(); t = now.hour*3600 + now.minute*60 + now.second
         return pl, day, lesson, a, b, {s_: data.get('%s_%s.json' % (key, s_)) for s_ in pl.get('salonlar', {})}, t
     def mousePressEvent(self, e):
+        if self.detail is not None and self.elle is not None:   # K-457: dokunulan sıra gelmedi / geldi
+            no_ = next((n_ for n_, r in self.seat_rects.items() if r.contains(QPointF(e.pos()))), None)
+            if no_ is not None:
+                n_ = int(no_); self.elle.symmetric_difference_update({n_}); self.relayout(); self.update()
+            e.accept(); return
         if self.detail is None:
             hit = next((s_ for s_, r in self.tiles.items() if r.contains(QPointF(e.pos()))), None)
             if hit:
@@ -8712,10 +8878,10 @@ class KarargahScreen(QWidget):
         if self.detail is not None:
             lst = pl['salonlar'].get(self.detail, []); y_ = ys.get(self.detail) or {}
             msgs_ = y_.get('mesajlar', [])
-            self.absent = {int(r['sira']) for r in y_.get('gelmedi', [])}
+            self.absent = {int(r['sira']) for r in y_.get('gelmedi', [])} if self.elle is None else set(self.elle)
             plan = dict(tur='salon', sinif=self.detail, liste=lst)
             if seat_layout(plan):
-                head = '%s  ·  Gelmeyen: %d  ·  %s' % (lesson, len(self.absent), ('Kalan %s' % ms(max(0, b - t))) if a <= t < b else ('Başlamasına %s' % ms(a - t) if t < a else 'Sınav bitti'))
+                head = ('✎ Gelmeyenlere dokunun  ·  ' if self.elle is not None else '') + '%s  ·  Gelmeyen: %d  ·  %s' % (lesson, len(self.absent), ('Kalan %s' % ms(max(0, b - t))) if a <= t < b else ('Başlamasına %s' % ms(a - t) if t < a else 'Sınav bitti'))
                 _draw_seatmap(self, p, W, H - 60*k, k, font, plan, '#5cc8ff', '#5cc8ff', head)
                 if msgs_:   # bu salonun mesajları, altta
                     mt = '   ·   '.join('%s  %s' % (time.strftime('%H.%M', time.localtime(m_.get('zaman', 0))), m_.get('metin', '')) for m_ in msgs_[-3:])
@@ -8756,7 +8922,7 @@ class KarargahScreen(QWidget):
             v = ys.get(s_); ng = len((v or {}).get('gelmedi', []))
             if not started: st_, col, bg, bd = ('Yoklama %02d.%02d' % ((a + YOKLAMA_BASLA)//3600, (a + YOKLAMA_BASLA)%3600//60) if t >= a else 'Sınav başlamadı'), '#8fa6c4', '#16243a', '#24364f'
             elif not v: st_, col, bg, bd = ('Yoklama bekleniyor' if yok_open else 'Yoklama gelmedi'), '#ffb020', '#2e2410', '#ffb020'
-            elif ng: st_, col, bg, bd = 'Gelmeyen: %d' % ng, '#ff5d6c', '#16243a', '#e5323f'
+            elif ng: st_, col, bg, bd = 'Gelmeyen: %d%s' % (ng, '  ✓' if v.get('onay') else ''), '#ff5d6c', '#16243a', '#e5323f'   # K-463: ✓ = gözcü onayladı
             elif v.get('onay'): st_, col, bg, bd = 'Tam', '#4fd18b', '#16243a', '#24364f'
             else: st_, col, bg, bd = ('İşaretleniyor' if yok_open else 'Gelmeyen yok · onaysız'), '#c9d6e8', '#16243a', '#24364f'
             if getattr(self, 'unread', {}).get(s_) and int(time.time()) % 2 == 0:   # okunmamış mesaj: kutu yanıp söner
@@ -9017,11 +9183,41 @@ def ara_html(rs, photo=None):
                     '<span style="color:#9fb3cc;font-size:18px">&nbsp;&nbsp;%s · %s</span><br>%s</div>' % (esc(r.get('ad', '')), esc(r.get('sinif', '')), esc(r.get('no', '')), '&nbsp;&nbsp;'.join(ch)))
     return ''.join(rows)
 
+_BELLEK = [0]
+def _pencere_temizligi():
+    """K-461: açılıp kapanan her pencere (anket, ayarlar, mesaj, şifre…) kapandıktan sonra bellekten silinir; eskiden uygulama kapanana dek kalıyordu."""
+    if getattr(QDialog, '_umal_exec', None) is not None: return
+    orj = QDialog.exec_
+    def exec_(self, *a, **k):
+        try: return orj(self, *a, **k)
+        finally:
+            try: QTimer.singleShot(3000, lambda d_=self: _sil(d_))
+            except Exception: pass
+    def _sil(d_):
+        try:
+            try: from PyQt5 import sip
+            except ImportError: import sip
+            if not sip.isdeleted(d_) and not d_.isVisible(): d_.deleteLater()
+        except Exception: pass
+    try: QDialog._umal_exec = orj; QDialog.exec_ = exec_
+    except Exception as e: print('pencere temizliği:', e)
+def bellek_topla(her=6):
+    """K-459: öğrenciler yerine baktıkça (arama, salon planı) açılan pencereler silinir; her 6 bakışta bir boşalan bellek sisteme geri verilir."""
+    _BELLEK[0] += 1
+    if _BELLEK[0] % her: return
+    try:
+        import gc; gc.collect()
+        from PyQt5.QtGui import QPixmapCache; QPixmapCache.clear()
+        import ctypes, ctypes.util
+        ctypes.CDLL(ctypes.util.find_library('c') or 'libc.so.6').malloc_trim(0)
+    except Exception as e: print('bellek:', e)
+
 class OgrenciAraDialog(QDialog):
     """Herhangi bir tahtada: öğrenci adını ya da numarasını yazar, bugünün ve sonraki sınavlarda salonunu ve sırasını görür.
     Klavye hemen açık; 1 dakika dokunulmazsa kendiliğinden kapanır."""
     def __init__(self, main):
         super().__init__(main); self.main = main; self.setWindowTitle(NEON_ARA_TEXT); self.setMinimumWidth(fit_w(1100))
+        self.setAttribute(Qt.WA_DeleteOnClose)   # K-459: kapanınca bellekte kalmasın (her bakışta yeni pencere birikiyordu)
         self.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;font-size:20px;background:transparent;} QLineEdit{font-size:30px;padding:12px 16px;border:2px solid #2f6fd6;border-radius:12px;}'
                            'QPushButton{background:#1d3150;color:white;border:1px solid #2a4468;border-radius:10px;padding:10px 16px;font-size:19px;font-weight:600;}')
         v = QVBoxLayout(self); v.setSpacing(12); v.setContentsMargins(26, 20, 26, 20)
@@ -9259,8 +9455,12 @@ class YerimDialog(QDialog):
     Dokununca ya da 30 sn sonra kapanır."""
     def __init__(self, main, plan, ders, day, sira):
         super().__init__(main); self.plan = plan; self.ders = ders; self.day = day; self.sira = sira; self.seat_rects = {}; self.absent = set()
+        self.setAttribute(Qt.WA_DeleteOnClose)   # K-459: salon resmi (~8 MB) her bakışta birikiyordu
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
-        g = main.geometry(); self.setGeometry(g)
+        # K-458: pencerenin değil ekranın tamamı (tahta tam ekranda değilken üst çubuk kadar aşağı kayıp alt şerit çerçevenin altında kalıyordu)
+        try: g = (main.screen() if hasattr(main, 'screen') and main.screen() else QApplication.primaryScreen()).geometry()
+        except Exception: g = main.geometry()
+        self.setGeometry(g); self.setWindowState(Qt.WindowFullScreen)
         self.nabiz = None; self.t = QTimer(self); self.t.setInterval(50); self.t.timeout.connect(lambda: self.update(self.nabiz) if self.nabiz is not None else self.update()); self.t.start()
         QTimer.singleShot(30000, self.accept)
     def paintEvent(self, e):
@@ -9273,9 +9473,10 @@ class YerimDialog(QDialog):
         on = getattr(self, '_on', None)
         if on is None or on[0] != (W, H):
             pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
-            try: _draw_seatmap(self, q, W, H - 60*k, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
+            pay = max(16, int(H*.035))   # tahtanın alt çerçevesi ekranın kenarını örter: alt şerit onun üstünde
+            try: _draw_seatmap(self, q, W, H - 60*k - pay, k, font, self.plan, '#5cc8ff', '#5cc8ff', '%s  ·  %d %s' % (self.ders, self.day.day, TR_MONTHS[self.day.month-1]))
             except Exception as ex: print('yerim:', ex)
-            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); bar_ = QRectF(0, H - 60*k, W, 60*k); q.drawRect(bar_)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 235)); q.drawRect(QRectF(0, H - 60*k - pay, W, 60*k + pay)); bar_ = QRectF(0, H - 60*k - pay, W, 60*k)
             q.setFont(font(26, True)); q.setPen(QColor('#7ff6ff'))
             q.drawText(bar_, Qt.AlignCenter, 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (self.plan['sinif'], self.sira))
             q.end(); on = self._on = ((W, H), pm, dict(self.seat_rects))
@@ -10030,7 +10231,7 @@ def _draw_seatmap_onbellek(self, p, W, H, k, font, plan, theme, accent, head):
     try:
         lst = hash(repr(plan.get('liste')))
         key = (int(W), int(H), round(k, 4), plan.get('sinif'), plan.get('tur'), plan.get('ev'), plan.get('baslik'), len(str(plan.get('saat') or '')), plan.get('hb_per'),
-               lst, tuple(sorted(getattr(self, 'absent', None) or ())), theme, accent, head, BOARD_PHOTOS, len(_PHOTOS.get('data') or {}), len(_PHOTOS.get('pix') or {}), len(AYRILAN))
+               lst, tuple(sorted(getattr(self, 'absent', None) or ())), theme, accent, head, BOARD_PHOTOS, id(_PHOTOS.get('data')), _PHOTOS.get('surum', 0), len(AYRILAN))   # K-460: açılmış fotoğraf sayısı anahtarda değil (her öğrenci aramasında plan 3–4 sn baştan çiziliyordu)
     except Exception: key = None
     c = getattr(self, '_sm_cache', None)
     if key is None or c is None or c[0] != key:
@@ -16711,7 +16912,14 @@ def main():
         QMessageBox.information(None,PRODUCT,'Uygulama zaten açık. Görev çubuğundaki pencereye dönün; serbest kalem için Ekrana yaz düğmesini kullanın.');return
     app.umal_lock = lock   # yeniden başlatmada bırakılır
     window = Window(); window.show()
+    _pencere_temizligi()
     app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
+    def _sk_tik():   # K-459: Atlas öndeyken Pardus ekran klavyesi hiç görünmesin (yazı alanı olmayan ekranlarda da açılıyordu); yazarken bekler
+        try:
+            if QApplication.applicationState() == Qt.ApplicationActive and getattr(window.board, 'active', None) is None: sistem_klavyesini_gizle()
+        except Exception: pass
+    window._bellek_zaman = QTimer(window); window._bellek_zaman.timeout.connect(lambda: bellek_bekcisi(window)); window._bellek_zaman.start(20000)   # K-461
+    window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(700)   # K-461: 2 sn → 0,7 sn
     app.aboutToQuit.connect(lambda: arka_dosya().bosalt())   # K-429: kuyruktaki yazmalar kapanmadan diske
     def _gc_ayar():   # K-429: Python bellek temizliği kalemi durdurmasın: açılıştaki kalıcı veri temizlik dışına, eşik yüksek
         import gc

@@ -2589,6 +2589,7 @@ class Board(QWidget):
     def cacheable(self, active_ok=False):
         o = self.owner
         if getattr(o, 'overlay_mode', False) or self.fading or self.transform or (self.active and not active_ok): return False
+        if getattr(self, '_canlandirma', 0): return False   # K-473: grafik çizim canlandırması sürerken hazır görüntü alınmaz (yarım eğri kalıyordu)
         if o.tool == 'smart' and self.selection_rect() is not None: return False
         d = getattr(o, 'daily', None)
         if d and o.solution_origin is None and any(it['tab'] == o.current_tab() and it['page'] == o.page for it in d['items']): return False
@@ -6294,6 +6295,11 @@ class Window(QMainWindow):
         self.yok_send(st, plan)
     def yok_confirm(self, st, plan):
         self.yok_state(st)['onay'] = True; self.yok_send(st, plan)
+        def tekrar(st_=dict(st), plan_=plan):   # K-463: onay kesin ulaşsın (bağlantı o an koptuysa 15 sn sonra bir kez daha)
+            try:
+                if self.yok_state(st_)['onay']: self.yok_send(st_, plan_)
+            except Exception as e: print('onay tekrar:', e)
+        QTimer.singleShot(15000, tekrar)
     def yok_send(self, st, plan, final=False):
         c = self.yok_state(st); pl = self.kelebek_plan(st['date'], st['lesson']) or {}; day = st['date'].isoformat()
         try: n = int(str(st['lesson']).split('.')[0])
@@ -6555,7 +6561,15 @@ class Window(QMainWindow):
             self.auto_restart_t0 = time.time(); QTimer.singleShot(30000, self.auto_restart); return
         if drawing or (idle < 10 and time.time() - getattr(self, 'auto_restart_t0', 0) < 600):
             QTimer.singleShot(3000, self.auto_restart); return   # yazarken hiç; dokunulurken en çok 10 dk beklenir
+        if self.arka_planda_ders():   # K-472: öğretmen derste tahtayı bıraktı (küçülttü ya da başka program önde): yeniden açılış dersi bölmez
+            QTimer.singleShot(30000, self.auto_restart); return
         self.restart_app()
+    def arka_planda_ders(self):
+        """K-472: ders saatinde Atlas küçültülmüş ya da başka bir program öndeyse True (Atlas o derste hiçbir şeye karışmaz)."""
+        try:
+            if not self.lesson_key(): return False
+            return bool(self.isMinimized() or QApplication.applicationState() != Qt.ApplicationActive)
+        except Exception: return False
     def restart_app(self):
         """Yeni sürümle yeniden aç: önce her şey kaydedilir, yeni açılış aynı sekme ve sayfadan devam eder."""
         try:
@@ -6565,7 +6579,7 @@ class Window(QMainWindow):
         arka_dosya().bosalt()
         try:
             with open(os.path.join(self.data_dir, 'yeniden-baslat.json'), 'w', encoding='utf-8') as f:
-                json.dump(dict(tam_ekran=self.isFullScreen(), zaman=time.time()), f)
+                json.dump(dict(tam_ekran=self.isFullScreen(), zaman=time.time(), kucuk=bool(self.isMinimized()), karsilama=list(getattr(self, 'welcome_key', None) or [])), f)
         except OSError: pass
         lock = getattr(QApplication.instance(), 'umal_lock', None)
         if lock is not None: lock.unlock()   # yeni açılış "zaten açık" demesin
@@ -6582,7 +6596,10 @@ class Window(QMainWindow):
             with open(path, encoding='utf-8') as f: d = json.load(f)
             os.remove(path)
         except (OSError, ValueError): return
-        if isinstance(d, dict) and (d.get('tam_ekran') or not self.isFullScreen()) and time.time() - d.get('zaman', 0) < 120:
+        taze = isinstance(d, dict) and time.time() - d.get('zaman', 0) < 120
+        if taze and len(d.get('karsilama') or []) == 2: self.welcome_key = tuple(d['karsilama'])   # K-472: bu ders için karşılama yeniden sorulmaz
+        if taze and d.get('kucuk'): self.showMinimized()   # K-472: küçültülmüşken yeniden açıldıysa öne gelmez
+        elif taze and (d.get('tam_ekran') or not self.isFullScreen()):
             self.showFullScreen(); QTimer.singleShot(100, self.fit_page)   # açılış animasyonu yok · K-396: tahta hep tam ekranla döner
         self.statusBar().showMessage('Yeni sürümle açıldı: ' + version_label())
     def elle_yoklama_yaz(self, veri):
@@ -6596,6 +6613,11 @@ class Window(QMainWindow):
         except OSError as e: print('elle yoklama:', e); return
         self.elle_kayitlar()[ad] = veri
         self.run_havuz('--yoklama-yaz', yol)
+        try:   # K-462: sınav bittikten sonra girilen yoklama: Gelmeyenler PDF'i ve mazeret listesi yeniden hazırlanıp Drive'a gider
+            flag = os.path.join(self.yok_dir(), 'rapor-%s_%s.tamam' % (veri.get('tarih'), veri.get('ders_no')))
+            self.__dict__.setdefault('_rapor_tamam', set()).discard(flag)
+            if os.path.exists(flag): os.remove(flag)
+        except OSError: pass
     def run_command(self, c):
         if c.get('komut') == 'yoklama' and isinstance(c.get('yoklama'), dict):   # K-457: Okul Panelinden girilen yoklama → Drive (Öğretmenler odası tahtası yazar)
             if self.board_info().get('sinif') in CLASS_PLACES:
@@ -8291,6 +8313,9 @@ class ExamScreen(QWidget):
         st = self.st; plan = self.main.seat_plan(st) if st else None
         if st and plan and plan['tur'] == 'salon':
             self.main.yok_confirm(st, plan); self.update_yok_btn(); self.fx_kind = 'ok'; self.fx_t0 = time.monotonic(); self.start_fx(1.7)
+            self.onay_saat = time.strftime('%H.%M'); self.update()
+            try: self.main.show_toast('✓ Yoklama onaylandı ve gönderildi  ·  Gelmeyen: %d' % len(self.main.yok_state(st)['gelmedi']))
+            except Exception: pass
     def update_yok_btn(self):
         st = self.st; show = bool(st and self.yok_on)
         k_ = min(self.width()/1600, self.height()/900)
@@ -8300,9 +8325,9 @@ class ExamScreen(QWidget):
         self.yok_btn.setVisible(show)
         if not show: return
         done = self.main.yok_state(st)['onay']
-        self.yok_btn.setText('Onaylandı  ✓' if done else 'Yoklamayı onayla'); self.yok_btn.setEnabled(not done)
+        self.yok_btn.setText('✓  ONAYLANDI' if done else 'Yoklamayı onayla'); self.yok_btn.setEnabled(not done); self.yok_btn.raise_()
         self.yok_btn.setStyleSheet('QPushButton{background:%s;color:%s;border:none;border-radius:12px;padding:0 22px;font-size:19px;font-weight:700;}'
-                                   % (('#1f4d36', '#9fe3bd') if done else ('#2fbf71', '#06240f')))
+                                   % (('#0f7a45', '#ffffff') if done else ('#2fbf71', '#06240f')))   # K-463: onaylanınca parlak yeşil, beyaz yazı
         k = min(self.width()/1600, self.height()/900); h = int(46*k); self.yok_btn.setFixedHeight(h); self.yok_btn.adjustSize()
         self.yok_btn.move(int(self.width()/2 + 300*k), int(self.height() - 58*k))
     def seat_at(self, pos):
@@ -8486,7 +8511,11 @@ class ExamScreen(QWidget):
                 p.setBrush(QColor('#ffb020')); p.drawRoundedRect(QRectF(bn.x(), bn.y(), 230*k, bn.height()), 12*k, 12*k)
                 text(QRectF(bn.x(), bn.y(), 230*k, bn.height()), 'YOKLAMA  %s' % ms(max(0, yl)), 21, '#1a1206', True)
                 self.hb_items['yok'] = dict(rect=QRectF(bn.x(), bn.y(), 230*k, bn.height()), m=0, kind='box', text='YOKLAMA  %s' % ms(max(0, yl)), font=font(21, True), color='#ffb020', fg='#1a1206', k=k, bg='#0d1726', strip='#3b2a10', per=.6 if yl <= 300 else 1.0)
-                text(QRectF(bn.x() + 246*k, bn.y(), bn.width() - 260*k, bn.height()), ('Gelmeyenin fotoğrafına dokunun  ·  Gelmeyen: %d' if BOARD_PHOTOS else 'Gelmeyenin adına dokunun  ·  Gelmeyen: %d') % len(self.absent), 18, '#ffd78a', True, Qt.AlignLeft | Qt.AlignVCenter)
+                if self.main.yok_state(st)['onay']:   # K-463: onaylandıysa şerit yeşil ve açıkça yazar (öğretmen onayın geçtiğini görsün)
+                    yr = QRectF(bn.x() + 236*k, bn.y(), bn.width() - 236*k, bn.height()); p.setPen(Qt.NoPen); p.setBrush(QColor('#0f7a45')); p.drawRoundedRect(yr, 12*k, 12*k)
+                    text(yr.adjusted(12*k, 0, -8*k, 0), '✓ YOKLAMA ONAYLANDI%s  ·  Gelmeyen: %d  ·  değiştirmek için öğrenciye dokunun' % ((' ' + self.onay_saat) if getattr(self, 'onay_saat', '') else '', len(self.absent)), 17, '#ffffff', True, Qt.AlignLeft | Qt.AlignVCenter)
+                else:
+                    text(QRectF(bn.x() + 246*k, bn.y(), bn.width() - 260*k, bn.height()), ('Gelmeyenin fotoğrafına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın' if BOARD_PHOTOS else 'Gelmeyenin adına dokunun  ·  Gelmeyen: %d  ·  bitince onaylayın') % len(self.absent), 18, '#ffd78a', True, Qt.AlignLeft | Qt.AlignVCenter)
             e_ = time.monotonic() - getattr(self, 'anim_t0', -99)
             if kind == 'formul' and e_ < self.MATH_INTRO: self.draw_math_intro(p, W, H, k, font, theme, e_)
             p.end(); return
@@ -8905,7 +8934,7 @@ class KarargahScreen(QWidget):
             v = ys.get(s_); ng = len((v or {}).get('gelmedi', []))
             if not started: st_, col, bg, bd = ('Yoklama %02d.%02d' % ((a + YOKLAMA_BASLA)//3600, (a + YOKLAMA_BASLA)%3600//60) if t >= a else 'Sınav başlamadı'), '#8fa6c4', '#16243a', '#24364f'
             elif not v: st_, col, bg, bd = ('Yoklama bekleniyor' if yok_open else 'Yoklama gelmedi'), '#ffb020', '#2e2410', '#ffb020'
-            elif ng: st_, col, bg, bd = 'Gelmeyen: %d' % ng, '#ff5d6c', '#16243a', '#e5323f'
+            elif ng: st_, col, bg, bd = 'Gelmeyen: %d%s' % (ng, '  ✓' if v.get('onay') else ''), '#ff5d6c', '#16243a', '#e5323f'   # K-463: ✓ = gözcü onayladı
             elif v.get('onay'): st_, col, bg, bd = 'Tam', '#4fd18b', '#16243a', '#24364f'
             else: st_, col, bg, bd = ('İşaretleniyor' if yok_open else 'Gelmeyen yok · onaysız'), '#c9d6e8', '#16243a', '#24364f'
             if getattr(self, 'unread', {}).get(s_) and int(time.time()) % 2 == 0:   # okunmamış mesaj: kutu yanıp söner
@@ -16002,11 +16031,21 @@ class GrafikCanlandir(QWidget):
     """Tahtaya açılırken eğrileri soldan sağa çizer (1,4 sn), sonra kaybolur; asıl grafik altta hazırdır."""
     def __init__(self, m, bilgi):
         super().__init__(m.board); self.m = m; self.bilgi = bilgi; self.t0 = time.monotonic()
+        m.board._canlandirma = getattr(m.board, '_canlandirma', 0) + 1; m.board.base = None   # K-473
         self.setAttribute(Qt.WA_TransparentForMouseEvents); self.setGeometry(m.board.rect()); self.show(); self.raise_()
         self.zm = QTimer(self); self.zm.setInterval(30); self.zm.timeout.connect(self.tik); self.zm.start()
     def tik(self):
-        if time.monotonic() - self.t0 > 1.5: self.zm.stop(); self.deleteLater(); return
+        if time.monotonic() - self.t0 > 1.5: self.zm.stop(); self.bitir(); return
         self.update()
+    def bitir(self):
+        """K-473: canlandırma bitince katman kalkar; bu sırada alınmış hazır görüntü varsa atılır ve tahta baştan çizilir."""
+        if getattr(self, '_bitti', False): return
+        self._bitti = True; b = self.m.board
+        try:
+            self.hide(); b._canlandirma = max(0, getattr(b, '_canlandirma', 1) - 1); b.base = None; b.snapshot = None if b.active is None else b.snapshot
+            b.update(); b.hazirla_sonra()
+        except Exception as e: print('grafik canlandır:', e)
+        self.deleteLater()
     def paintEvent(self, e):
         t = min(1.0, (time.monotonic() - self.t0)/1.4); b = self.m.board; k = b.scale; W = self.bilgi['W']; m_ = self.bilgi['m']
         p = QPainter(self); p.setRenderHint(QPainter.Antialiasing)

@@ -1222,7 +1222,7 @@ def _x11_klavye_gizle(pidler):
                         if X.XGetWindowAttributes(d, c, oz) and ctypes.c_int.from_buffer(oz, 92).value == 2:   # map_state == IsViewable
                             X.XUnmapWindow(d, c); say += 1
                         continue
-                if derinlik < 2 and pid != ben: gez(c, derinlik + 1)
+                if derinlik < 1 and pid != ben: gez(c, derinlik + 1)   # kök → çerçeve → pencere
         gez(X.XDefaultRootWindow(d), 0); X.XSync(d, 0)
     except Exception:
         _SK_X[0][2] = None; raise
@@ -17168,7 +17168,7 @@ def main():
     app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
     def _sk_tik():   # K-459: Atlas öndeyken Pardus ekran klavyesi hiç görünmesin (yazı alanı olmayan ekranlarda da açılıyordu); yazarken bekler
         try:
-            if QApplication.applicationState() == Qt.ApplicationActive and getattr(window.board, 'active', None) is None: sistem_klavyesini_gizle()
+            if QApplication.applicationState() == Qt.ApplicationActive and not window.kalem_yaziyor(): sistem_klavyesini_gizle()   # K-484: yazarken ve bıraktıktan 1,5 sn sonrasına kadar tarama yok
         except Exception: pass
     window._bellek_zaman = QTimer(window); window._bellek_zaman.timeout.connect(lambda: bellek_bekcisi(window)); window._bellek_zaman.start(20000)   # K-461
     window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(700)   # K-461: 2 sn → 0,7 sn

@@ -33,7 +33,7 @@ def a1():
     for nm in ('welcome', 'intro'):
         x = getattr(w, nm, None)
         if x is not None: x.hide()
-    w.start_messages(); app.processEvents(); w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
+    w.start_messages(); app.processEvents(); sabit = datetime.datetime.combine(datetime.date.today(), datetime.time(10, 0, 5)); w.exam_clock = lambda: sabit; w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
     t0 = time.perf_counter(); w.open_preview(); app.processEvents(); es = w.exam_screen
     print('sınav yerleri açılışı %.0f ms | görünür %s | koltuk %d' % ((time.perf_counter() - t0)*1000, es is not None and es.isVisible(), len(getattr(es, 'seat_rects', {}) or {})))
     import traceback, collections

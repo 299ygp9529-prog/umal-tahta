@@ -33,7 +33,7 @@ def a1():
     for nm in ('welcome', 'intro'):
         x = getattr(w, nm, None)
         if x is not None: x.hide()
-    w.start_messages(); app.processEvents(); w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
+    w.start_messages(); app.processEvents(); sabit = datetime.datetime.combine(datetime.date.today(), datetime.time(10, 0, 5)); w.exam_clock = lambda: sabit; w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
     t0 = time.perf_counter(); w.open_preview(); app.processEvents(); es = w.exam_screen
     print('sınav yerleri açılışı %.0f ms | görünür %s | koltuk %d' % ((time.perf_counter() - t0)*1000, es is not None and es.isVisible(), len(getattr(es, 'seat_rects', {}) or {})))
     bekle(2500); n0 = len(olc['es']); bekle(3000); bos = olc['es'][n0:]
@@ -50,6 +50,7 @@ def a1():
         ilk = olc['yd'][0] if olc['yd'] else (t2, -1); arada = olc['es'][n1:]; n2 = len(olc['es']); bekle(4000); son = olc['es'][n2:]
         print('%d) dokunuş (Yerimi bul çıkar) %.0f ms | salon açılışı: ilk çizime kadar %.0f ms (çizim %.0f ms) | pencere açıkken sınav ekranı %d kez boyandı (toplam %.0f ms) | kapanış %.0f ms | dönüşte 4 sn: %d boyama, en çok %.0f ms, toplam %.0f ms'
               % (tur + 1, (t1 - t0)*1000, (ilk[0] - t2)*1000, ilk[1], len(arada), sum(d for _, d in arada), (t3 - kapat[0])*1000, len(son), max([d for _, d in son] or [0]), sum(d for _, d in son)))
-    print('dönüşte ekran görünür:', es.isVisible(), '| pencere etkin:', w.isActiveWindow(), '| exposed:', w.windowHandle().isExposed())
+    print('sınav ekranı duruyor:', w.exam_screen is es); es = w.exam_screen
+    print('dönüşte ekran görünür:', es is not None and es.isVisible(), '| pencere etkin:', w.isActiveWindow(), '| exposed:', w.windowHandle().isExposed())
     import subprocess; subprocess.run(['import', '-window', 'root', '/tmp/onizleme/sinav-yerleri.png']); print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
 QTimer.singleShot(2500, a1); app.exec_()

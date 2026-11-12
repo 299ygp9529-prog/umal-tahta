@@ -12884,8 +12884,7 @@ class AtlasYuzen(QWidget):
                 elif t_: ozet.append(t_)
             self.grafik = [f for f in (d.get('grafik') or [])[:2] if isinstance(f, str) and graph_compile(f)[0]]
             import re as _re
-            oz = latex_duz(' '.join(ozet)); c_ = _re.search(r'^(.{20,170}?[.!?])(\s|$)', oz)   # yapay zekâ çözmeye başlarsa yalnız ilk cümle
-            oz = c_.group(1) if c_ else (oz[:170] + '…' if len(oz) > 170 else oz)
+            oz = atlas_ilk_cumle(' '.join(ozet))   # K-478: yapay zekâ çözmeye başlarsa yalnız ilk cümle; formüller bozulmadan (kesir üst üste, taban altta) çizilir
             sec = [latex_duz(x) for x in sec if 2 <= len(x) <= 34 and len(x.split()) <= 5][:4]
             if not sec: sec = ['Soruyu çöz', 'Adım adım anlat', 'Çözümü kontrol et'] + (['Grafiğini çiz'] if self.grafik else [])
             self.balon_goster(oz or 'Ne yapayım?', sec + ['Başka bir şey sor…']); self.maskot.ifade('konusma')
@@ -12907,15 +12906,28 @@ class AtlasYuzen(QWidget):
             bal.zaman = QTimer(bal); bal.zaman.setSingleShot(True); bal.zaman.timeout.connect(self.balon_kapat)
         for b_ in bal.dug: bal.izgara.removeWidget(b_); b_.hide(); b_.setParent(None); b_.deleteLater()
         bal.dug = []
-        bal.yazi.setText('<b style="color:#7ff6ff">Atlas:</b> ' + metin.replace('&', '&amp;').replace('<', '&lt;'))
+        vp = m.scroll.viewport().geometry(); W_ = min(640, vp.width() - 40)
+        try:   # K-478: yazı, cevap panelindeki formül çizicisiyle (kesirler üst üste, alt/üst simgeler yerinde); düz yazıya çevrilince karakterler bozuluyordu
+            im_ = atlas_cevap_resmi('Atlas: ' + metin, W_ - 32 - 70, 22, '#eef6ff', True)
+            bal.yazi.setText(''); bal.yazi.setPixmap(QPixmap.fromImage(im_)); yazi_h = im_.height()
+        except Exception as e:
+            print('balon yazı:', e); bal.yazi.setPixmap(QPixmap()); yazi_h = None
+            bal.yazi.setText('<b style="color:#7ff6ff">Atlas:</b> ' + latex_duz(metin).replace('&', '&amp;').replace('<', '&lt;'))
         for i, t_ in enumerate(secenekler):
             b_ = QPushButton(t_); b_.setFocusPolicy(Qt.NoFocus)
             if i == 0 and t_ != 'Başka bir şey sor…': b_.setObjectName('ilk')
             b_.setMinimumHeight(48); b_.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b_.clicked.connect(lambda c=False, t__=t_: self.secildi(t__)); bal.izgara.addWidget(b_, i//2, i % 2); bal.dug.append(b_)
-        vp = m.scroll.viewport().geometry(); W_ = min(640, vp.width() - 40); bal.setFixedWidth(W_)
-        sat_ = (len(secenekler) + 1)//2; yh = max(30, bal.yazi.heightForWidth(W_ - 32 - 70) + 14); bal.setFixedHeight(12 + max(yh, 40) + (10 + sat_*48 + (sat_ - 1)*8 if sat_ else 0) + 14)
-        x = max(vp.x() + 8, self.x() - bal.width() - 14); y = max(vp.y() + 8, min(self.y() + self.height() - bal.height(), vp.bottom() - bal.height() - 8))
+        bal.setFixedWidth(W_)
+        sat_ = (len(secenekler) + 1)//2; yh = max(30, (yazi_h if yazi_h is not None else bal.yazi.heightForWidth(W_ - 32 - 70)) + 14); bal.setFixedHeight(12 + max(yh, 40) + (10 + sat_*48 + (sat_ - 1)*8 if sat_ else 0) + 14)
+        # K-478: balon maskotun üstüne binmez: önce solu, sığmazsa sağı, o da olmazsa üstü ya da altı
+        bw, bh = bal.width(), bal.height(); sik = lambda v, a, b: max(a, min(v, b))
+        yy = sik(self.y() + self.height() - bh, vp.y() + 8, max(vp.y() + 8, vp.bottom() - bh - 8))
+        if self.x() - bw - 14 >= vp.x() + 8: x, y = self.x() - bw - 14, yy
+        elif self.x() + self.width() + 14 + bw <= vp.right() - 8: x, y = self.x() + self.width() + 14, yy
+        else:
+            x = sik(self.x() + self.width()//2 - bw//2, vp.x() + 8, max(vp.x() + 8, vp.right() - bw - 8))
+            y = self.y() - bh - 10 if self.y() - bh - 10 >= vp.y() + 8 else min(self.y() + self.height() + 10, max(vp.y() + 8, vp.bottom() - bh - 8))
         bal.move(x, y); bal.show(); bal.raise_(); self.raise_()
         if secenekler: bal.zaman.start(30000)   # dokunulmazsa kendiliğinden kapanır
     def balon_kapat(self):
@@ -12929,6 +12941,15 @@ class AtlasYuzen(QWidget):
             m.atlas_panel.grafik = list(self.grafik); m.atlas_panel.grafik_ciz(); return
         m.atlas_sor_ac(pix); pn = m.atlas_panel
         if t != 'Başka bir şey sor…': QTimer.singleShot(0, lambda: pn.sor(t))
+
+def atlas_ilk_cumle(t, en_az=20, en_cok=200):
+    """K-478: özetin ilk cümlesi, LaTeX'e dokunmadan: '2.' gibi sıra sayısında ya da $…$ içindeki noktada kesilmez."""
+    t = ' '.join((t or '').split()); dolar = 0
+    for i, ch in enumerate(t):
+        if ch == '$': dolar += 1
+        elif ch in '.!?' and i >= en_az and dolar % 2 == 0 and not t[i-1].isdigit() and (i + 1 == len(t) or t[i+1] == ' '): return t[:i+1]
+        if i >= en_cok and dolar % 2 == 0 and ch == ' ': return t[:i] + '…'
+    return t
 
 def latex_duz(t):
     """Balon için LaTeX'i okunur düz yazıya çevirir ($x^{2}$ → x², \\frac{a}{b} → a/b)."""

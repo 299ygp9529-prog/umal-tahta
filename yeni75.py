@@ -3441,12 +3441,13 @@ class Board(QWidget):
         pal = getattr(self, 'palm_ids', None)
         if pal is None: pal = self.palm_ids = set()
         pal |= {p.id() for p in active if self.contact_size(p) >= self.PALM_PX}
-        if self.active is not None and not getattr(self, 'gesture', None) and self.writing_started() and self.pointer not in pal:
-            return False   # yazarken gelen ek temas (avuç, bilek, parmak) yok sayılır: çizgi ilk parmakla sürer
+        el = getattr(self.owner, 'tool', '') == 'hand'
+        if self.active is not None and not getattr(self, 'gesture', None) and (self.writing_started() or not el) and self.pointer not in pal:
+            return False   # yazarken gelen ek temas (avuç, bilek, öğrenci parmakları) yok sayılır: çizgi yalnız yazan parmakla sürer · K-490: yazı araçlarında ilk andan itibaren
         if self.active is not None and self.pointer in pal:   # çizgiyi avuç başlatmış: iptal (iz bırakmaz)
             self.finish(cancel=True); self.pointer = None
         fingers = [p for p in active if p.id() not in pal]
-        if len(active) >= 3 or getattr(self, 'palm', False):   # yumruk / çok temas: hepsi kalkana dek yok sayılır
+        if (len(active) >= 3 and (el or e is None or e.type() == QEvent.TouchBegin)) or getattr(self, 'palm', False):   # yumruk (aynı anda 3+ temas): hepsi kalkana dek yok sayılır · K-490: yazı araçlarında sonradan gelen çok temas (öğrenciler) yazmayı kilitlemez
             if not getattr(self, 'palm', False):
                 if self.active or self.transform: self.finish(cancel=True)
                 self.gesture = None; self.palm = True; self.pointer = None
@@ -3513,6 +3514,8 @@ class Board(QWidget):
                         self.pointer = new_.id(); self.touch_t0 = time.monotonic()
                         self.begin(new_.screenPos() if self.owner.tool == 'hand' else new_.pos())
                 for p in pts:
+                    if p.id() == self.pointer and p.state() == Qt.TouchPointReleased:   # K-490: yazan parmak kalktı, başkaları hâlâ dokunuyor: çizgi burada biter
+                        self.move(p.screenPos() if self.pan else p.pos()); self.finish(); self.pointer = None; break
                     if p.id() == self.pointer and p.state() != Qt.TouchPointPressed: self.move(p.screenPos() if self.pan else p.pos())
             else:
                 self.finish(e.type() == QEvent.TouchCancel)

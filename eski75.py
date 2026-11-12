@@ -1178,18 +1178,71 @@ def tr_kucuk(t): return (t or '').replace('I', 'ı').replace('İ', 'i').lower()
 SISTEM_KLAVYE_RE = '(eta-?keyboard|onboard|florence|matchbox-keyboard|squeekboard|pardus-?(on-?screen-?)?(keyboard|klavye)|ekran.?klavye)'
 _SK_IS = [None]
 _SK_PID = [0, []]
+_SK_X = [None]
+def _x11_klavye_gizle(pidler):
+    """K-484: xdotool olmadan (tahtalarda kurulu değil) doğrudan X11 ile: sınıfı / adı klavye olan ya da klavye sürecine ait görünür pencereler gizlenir.
+    Kendi bağlantısını açar (Qt'ninkine dokunmaz); Atlas'ın kendi pencereleri atlanır. Dönen: gizlenen pencere sayısı."""
+    import ctypes, re as _re
+    if _SK_X[0] is None:
+        X = ctypes.CDLL('libX11.so.6'); vp = ctypes.c_void_p; ul = ctypes.c_ulong
+        X.XOpenDisplay.restype = vp; X.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        X.XDefaultRootWindow.restype = ul; X.XDefaultRootWindow.argtypes = [vp]
+        X.XInternAtom.restype = ul; X.XInternAtom.argtypes = [vp, ctypes.c_char_p, ctypes.c_int]
+        X.XQueryTree.argtypes = [vp, ul, ctypes.POINTER(ul), ctypes.POINTER(ul), ctypes.POINTER(ctypes.POINTER(ul)), ctypes.POINTER(ctypes.c_uint)]
+        X.XGetWindowProperty.argtypes = [vp, ul, ul, ctypes.c_long, ctypes.c_long, ctypes.c_int, ul, ctypes.POINTER(ul), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ul), ctypes.POINTER(ul), ctypes.POINTER(vp)]
+        X.XGetWindowAttributes.argtypes = [vp, ul, vp]; X.XUnmapWindow.argtypes = [vp, ul]; X.XFree.argtypes = [vp]; X.XFlush.argtypes = [vp]; X.XSync.argtypes = [vp, ctypes.c_int]; X.XCloseDisplay.argtypes = [vp]
+        HT = ctypes.CFUNCTYPE(ctypes.c_int, vp, vp); X.XSetErrorHandler.restype = vp; X.XSetErrorHandler.argtypes = [HT]
+        yut_ = HT(lambda d, e: 0); X.XSetErrorHandler(yut_)   # kapanmış pencere hatası süreci düşürmesin
+        _SK_X[0] = [X, yut_, X.XOpenDisplay(None)]   # bağlantı açık tutulur (her taramada yeniden açılmaz)
+    X, yut, d = _SK_X[0]; ul = ctypes.c_ulong
+    if not d: return 0
+    say = 0
+    try:
+        a_pid = X.XInternAtom(d, b'_NET_WM_PID', 0); a_cls = 67; a_ad = 39; ben = os.getpid(); pidler = set(int(x) for x in pidler)
+        def ozellik(w, atom, uzun):
+            t = ul(); f = ctypes.c_int(); n = ul(); kalan = ul(); veri = ctypes.c_void_p()
+            if X.XGetWindowProperty(d, w, atom, 0, 64, 0, 0, ctypes.byref(t), ctypes.byref(f), ctypes.byref(n), ctypes.byref(kalan), ctypes.byref(veri)) != 0 or not veri.value: return None
+            try:
+                if uzun: return ctypes.cast(veri, ctypes.POINTER(ul))[0] if (f.value == 32 and n.value) else None
+                return ctypes.string_at(veri.value, n.value).replace(b'\0', b' ').decode('utf-8', 'replace') if f.value == 8 else None
+            finally: X.XFree(veri)
+        def cocuklar(w):
+            r_ = ul(); p_ = ul(); c_ = ctypes.POINTER(ul)(); n_ = ctypes.c_uint()
+            if not X.XQueryTree(d, w, ctypes.byref(r_), ctypes.byref(p_), ctypes.byref(c_), ctypes.byref(n_)) or not c_: return []
+            try: return [c_[i] for i in range(n_.value)]
+            finally: X.XFree(c_)
+        oz = ctypes.create_string_buffer(256)
+        def gez(w, derinlik):
+            nonlocal say
+            for c in cocuklar(w)[:400]:
+                pid = ozellik(c, a_pid, True); sinif = ozellik(c, a_cls, False)
+                if pid != ben and (pid or sinif):
+                    ad = (sinif or '') + ' ' + (ozellik(c, a_ad, False) or '')
+                    if (pid in pidler) or _re.search(SISTEM_KLAVYE_RE, ad, _re.I) or (sinif and _re.search('(keyboard|klavye)', sinif, _re.I)):
+                        if X.XGetWindowAttributes(d, c, oz) and ctypes.c_int.from_buffer(oz, 92).value == 2:   # map_state == IsViewable
+                            X.XUnmapWindow(d, c); say += 1
+                        continue
+                if derinlik < 1 and pid != ben: gez(c, derinlik + 1)   # kök → çerçeve → pencere
+        gez(X.XDefaultRootWindow(d), 0); X.XSync(d, 0)
+    except Exception:
+        _SK_X[0][2] = None; raise
+    return say
 def sistem_klavyesini_gizle():
     """K-454: Pardus / ETAP ekran klavyesi (eta-keyboard, onboard…) Atlas klavyesinin üstünde açılırsa gizlenir. Arka planda (ekran beklemez);
     yalnız başka süreçlerin pencereleri (Atlas'ın kendi penceresine dokunulmaz). UMAL_SISTEM_KLAVYE=1 ise hiçbir şey yapmaz."""
     import subprocess, threading
-    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1' or not shutil.which('xdotool'): return
+    if os.environ.get('UMAL_SISTEM_KLAVYE') == '1': return
+    try:   # K-484: asıl yol — xdotool gerekmez; ana iş parçacığında (Xlib iş parçacığı güvenli değil), birkaç ms
+        n_ = _x11_klavye_gizle(_SK_PID[1])
+        if n_: print('sistem klavyesi gizlendi (x11)', n_)
+    except Exception as e_: print('x11 klavye gizle:', e_)
     if _SK_IS[0] is not None and _SK_IS[0].is_alive(): return
     def calis():
-        ids = set()
-        for kip in ('--classname', '--class', '--name'):
+        ids = set(); xdo = bool(shutil.which('xdotool')) and os.environ.get('UMAL_XDOTOOL_YOK') != '1'
+        for kip in ('--classname', '--class', '--name') if xdo else ():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, SISTEM_KLAVYE_RE], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
-        for kip in ('--classname', '--class'):   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
+        for kip in ('--classname', '--class') if xdo else ():   # K-461: adında klavye / keyboard geçen her pencere sınıfı (program adı bilinmese de)
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', kip, '(keyboard|klavye)'], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         # K-459: pencere adı bilinmese de: adı klavye olan süreçlerin pencereleri (eta-keyboard, onboard, pardus…keyboard)
@@ -1205,7 +1258,7 @@ def sistem_klavyesini_gizle():
                     if int(d_) != os.getpid() and _re.search(r'(keyboard|klavye|onboard|florence|squeekboard)', c_.split(' ')[0] + ' ' + ' '.join(c_.split(' ')[1:3])): pid_.append(d_)
             except OSError: pass
             _SK_PID[:] = [time.time(), pid_]
-        for pd_ in _SK_PID[1]:
+        for pd_ in _SK_PID[1] if xdo else ():
             try: ids |= set(subprocess.run(['xdotool', 'search', '--onlyvisible', '--pid', pd_], capture_output=True, text=True, timeout=2).stdout.split())
             except Exception: pass
         ben = os.getpid()
@@ -3809,7 +3862,7 @@ class Window(QMainWindow):
             if o is not None: o.fit(vp); o.raise_()
         sb=getattr(self,'soru_buyut_b',None)
         if sb is not None:
-            g_=getattr(self,'solution_origin',None) is not None
+            g_=getattr(self,'solution_origin',None) is not None and not (ap is not None and ap.isVisible() and not ap.tam)   # Atlas yandayken soru zaten sığdırılır; dar alanda düğmeler üst üste gelmesin
             if sb.isVisibleTo(self.nav)!=g_: sb.setVisible(g_)
         self.nav.adjustSize();self.nav.move(vp.x()+10,vp.bottom()-self.nav.height()-10);self.nav.raise_()   # lower left
         fb=getattr(self,'float_bell',None)
@@ -6151,6 +6204,12 @@ class Window(QMainWindow):
         self.close_exam_screen_for_tool(); self.hide_welcome(); self.board.finish()
         if getattr(self, 'rastgele_screen', None) is None: self.rastgele_screen = RastgeleScreen(self)
         self.rastgele_screen.fit(self.rect()); self.rastgele_screen.show(); self.rastgele_screen.raise_()
+    def open_dbs(self):
+        """K-486: Ders Başarı Sınavı yerleşimi (sınıfın kendi öğrencileri; kelebek planına dokunmaz)."""
+        st = exam_now(self.exam_clock(), getattr(self, 'exams', None)) if not self.proje_demo() else None
+        if st and st.get('phase') in ('before', 'during'): self.show_toast('Sınav sırasında açılmaz.'); return
+        if not self.proje_roster(): self.show_toast('Bu sınıf için öğrenci listesi yok.'); return
+        self.board.finish(); DbsEkran(self).exec_(); bellek_topla()
     def open_okul(self):
         self.board.finish(); OkulAraclari(self).exec_()
     def open_anket(self, bolum='anket', canli=False):
@@ -6237,17 +6296,28 @@ class Window(QMainWindow):
     def atlas_soruyu_sigdir(self):
         """K-474: Atlas paneli kenardayken çerçeveye alınan soru, tahtanın kalan alanına sığacak kadar büyütülür ve ortalanır."""
         try:
-            c = getattr(self, 'atlas_son_cerceve', None); pn = getattr(self, 'atlas_panel', None)
-            if not c or c[0] != self.page or pn is None or not pn.isVisible() or pn.tam or pn.resim is None: return
+            pn = getattr(self, 'atlas_panel', None); c = getattr(pn, 'hedef', None)   # K-479: yalnız bu sorunun kendi bölgesi (eski bir çerçeve değil)
+            if pn is None or not pn.isVisible() or pn.tam: return
+            if not c or c[0] != id(self.doc) or c[1] != self.page or pn.resim is None:
+                # çözüm alanında (yazarak sorulsa bile) soru kartı panelin altında kalmasın
+                o_ = getattr(self, 'solution_origin', None); c = None
+                if o_ and o_.get('card') and ((self.doc.metadata or {}).get('keywords') or '') == 'UMAL-solution':
+                    c_ = o_['card']; c = (id(self.doc), self.page, QRectF(c_[0] - 10, c_[1] - 10, c_[2] - c_[0] + 20, c_[3] - c_[1] + 20))
+                if not c: return
             if getattr(self.board, 'active', None) is not None: return   # yazarken dokunma
-            r = c[1]; vp = self.scroll.viewport(); vw = vp.width() - 28; vh = vp.height() - 28
+            r = c[2]; vp = self.scroll.viewport(); gen = vp.width()
+            try:   # K-479: panel görünür alanın üstüne biniyorsa yalnız açıkta kalan genişlik sayılır
+                px = vp.mapFromGlobal(pn.mapToGlobal(QPoint(0, 0))).x()
+                if 120 < px < gen: gen = px
+            except Exception: pass
+            vw = gen - 28; vh = vp.height() - 28
             if vw < 120 or vh < 120 or r.width() < 4 or r.height() < 4: return
             q = self.board.scale/max(self.zoom, 1e-6)
             if getattr(self, '_atlas_onceki', None) is None:
                 self._atlas_onceki = (self.page, self.zoom, self.scroll.horizontalScrollBar().value(), self.scroll.verticalScrollBar().value())
             self.set_zoom(min(vw/(r.width()*q), vh/(r.height()*q), 6.0))
             k = self.board.scale
-            self.scroll.horizontalScrollBar().setValue(int(r.x()*k - (vp.width() - r.width()*k)/2))
+            self.scroll.horizontalScrollBar().setValue(int(r.x()*k - (gen - r.width()*k)/2))
             self.scroll.verticalScrollBar().setValue(int(r.y()*k - (vp.height() - r.height()*k)/2))
         except Exception as e: print('atlas sığdır:', e)
     def atlas_gorunumu_geri(self):
@@ -6265,6 +6335,7 @@ class Window(QMainWindow):
         r = QRectF(QPointF(*pts[0]), QPointF(*pts[1])).normalized()
         if min(r.width(), r.height())*self.board.scale < 16: geri(); return
         self.atlas_son_cerceve = (self.page, QRectF(r))   # Tahtaya yaz: cevap bu sorunun altına yazılır
+        self.atlas_sigdir_hedef = (id(self.doc), self.page, QRectF(r))   # K-479: panel açılınca kalan alana sığdırılacak bölge
         self.atlas_sor_secim(r, True)
     def atlas_sor_secim(self, r, otomatik=False):
         """Seçilen bölümün görüntüsü (çerçeve olmadan) Atlas'a gider; otomatik: dersin ilk seçeneğiyle (Çöz…) hemen sorulur."""
@@ -9568,6 +9639,223 @@ class YerimDialog(QDialog):
         p.end()
     def mousePressEvent(self, e): self.accept()
 
+# ---- K-486: Ders Başarı Sınavı (DBS) yerleşimi — sınıfın kendi öğrencileri, o derse özel, fotoğraflı ve rastgele ----
+DBS_ISARET = (('tek', 'Tek otursun'), ('on', 'En öne gelsin'), ('arka', 'Arkada oturmasın'))
+def dbs_yerlestir(ros, desks, isaret, gecmis, rnd, deneme=40):
+    """ros: [(no, ad)]; desks: [(x, y, en, [sıra numaraları])]; isaret: {no: {'tek','on','arka'}}; gecmis: son DBS'de aynı sırada oturan çiftler (frozenset).
+    Dönen: ({no: sıra}, uygulanamayan işaret sayısı). Önce işaretliler yerleşir; aynı çift üst üste yan yana gelmesin diye birkaç deneme içinden en iyisi seçilir."""
+    nolar = [str(r[0]) for r in ros]; isr = {n: set(isaret.get(n) or ()) for n in nolar}
+    tekler = [n for n in nolar if 'tek' in isr[n]]; hak = max(0, sum(len(d[3]) for d in desks) - len(nolar)); temel = 0
+    if len(tekler) > hak:   # boş yerden fazla 'tek otursun': fazlası normal oturur (herkes mutlaka yerleşir)
+        rnd.shuffle(tekler); tekler.sort(key=lambda n: 'on' not in isr[n])
+        for n in tekler[hak:]: isr[n].discard('tek'); temel += 1
+    gerek = len(nolar) + sum(1 for n in nolar if 'tek' in isr[n])
+    ys = sorted({d[1] for d in desks}); kul = []; kap = 0
+    for y in ys:   # önden başlayarak yetecek kadar sıra dizisi (arka boş kalır, sınıf öne toplanır)
+        kul.append(y); kap += sum(len(d[3]) for d in desks if d[1] == y)
+        if kap >= gerek: break
+    on_y = kul[0]; arka_y = set(kul[-2:]) if len(kul) >= 4 else set(kul[-1:]) if len(kul) >= 2 else set()
+    masalar = [d for d in desks if d[1] in kul]
+    en_iyi = None
+    for _ in range(max(1, deneme)):
+        bos = {i: list(d[3]) for i, d in enumerate(masalar)}; yer = {}; sorun = temel
+        def koy(n, uygun, tek=False):
+            ad = [i for i in bos if bos[i] and uygun(masalar[i]) and (not tek or len(bos[i]) == len(masalar[i][3]))]
+            if not ad: return False
+            if tek:   # tekli masa varsa önce o (çiftli masa boşa gitmesin)
+                t1 = [i for i in ad if len(masalar[i][3]) == 1]; ad = t1 or ad
+            i = rnd.choice(ad); s_ = rnd.choice(bos[i]); yer[n] = s_
+            if tek: bos[i] = []
+            else: bos[i].remove(s_)
+            return True
+        gruplar = [[n for n in nolar if 'tek' in isr[n] and 'on' in isr[n]], [n for n in nolar if 'tek' in isr[n] and 'on' not in isr[n]],
+                   [n for n in nolar if 'on' in isr[n] and 'tek' not in isr[n]], [n for n in nolar if 'arka' in isr[n] and not (isr[n] & {'tek', 'on'})],
+                   [n for n in nolar if not isr[n]]]
+        for g in gruplar: rnd.shuffle(g)
+        for n in gruplar[0] + gruplar[1]:
+            on = 'on' in isr[n]; ar = 'arka' in isr[n]
+            kosul = (lambda d: d[1] == on_y) if on else (lambda d: d[1] not in arka_y) if ar else (lambda d: True)
+            if koy(n, kosul, True): continue
+            sorun += 1
+            if not koy(n, lambda d: True, True) and not koy(n, kosul) and not koy(n, lambda d: True): pass
+        for n in gruplar[2]:
+            if koy(n, lambda d: d[1] == on_y): continue
+            sorun += 1
+            for y in kul[1:]:
+                if koy(n, lambda d, y=y: d[1] == y): break
+        for n in gruplar[3]:
+            if not koy(n, lambda d: d[1] not in arka_y): sorun += 1; koy(n, lambda d: True)
+        for n in gruplar[4]: koy(n, lambda d: True)
+        sira_no = {s_: n for n, s_ in yer.items()}; tekrar = 0
+        for d in masalar:
+            o = [sira_no[x] for x in d[3] if x in sira_no]
+            if len(o) == 2 and frozenset(o) in gecmis: tekrar += 1
+        puan = (len(nolar) - len(yer))*100000 + sorun*1000 + tekrar
+        if en_iyi is None or puan < en_iyi[0]: en_iyi = (puan, yer, sorun)
+        if puan == 0: break
+    return en_iyi[1], en_iyi[2]
+
+class DbsIsaret(QDialog):
+    """DBS: bir öğrencinin yer işaretleri (yalnız 'Düzenle' kipinde açılır; tahtada başka zaman görünmez)."""
+    def __init__(self, ust, ad, secili, yok):
+        super().__init__(ust); self.setWindowTitle('Yer ayarı'); self.setMinimumWidth(fit_w(460))
+        self.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;} QPushButton{font-size:22px;font-weight:700;color:white;background:#13233a;border:2px solid #2a4468;border-radius:14px;padding:12px 18px;text-align:left;}'
+                           'QPushButton:checked{background:#12425a;border-color:#22e8ff;color:#7ff6ff;}')
+        v = QVBoxLayout(self); v.setContentsMargins(24, 20, 24, 20); v.setSpacing(12)
+        t = QLabel(ad); t.setStyleSheet('font-size:26px;font-weight:800;color:#7ff6ff;'); v.addWidget(t); self.d = {}
+        for anahtar, yazi in DBS_ISARET + (('yok', 'Bugün yok (yerleşime girmez)'),):
+            b = QPushButton(yazi); b.setCheckable(True); b.setFocusPolicy(Qt.NoFocus); b.setChecked((anahtar in secili) if anahtar != 'yok' else yok)
+            b.toggled.connect(lambda a, b_=b, y_=yazi: b_.setText(('✓  ' if a else '') + y_)); b.setText(('✓  ' if b.isChecked() else '') + yazi); v.addWidget(b); self.d[anahtar] = b
+        tm = QPushButton('Tamam'); tm.setStyleSheet('text-align:center;background:#22e8ff;color:#06202a;border-color:#22e8ff;'); tm.clicked.connect(self.accept); v.addWidget(tm)
+    def sonuc(self): return {a for a, _ in DBS_ISARET if self.d[a].isChecked()}, self.d['yok'].isChecked()
+
+class DbsEkran(QDialog):
+    """K-486: 'DBS yerleşimi' — sınıfın öğrencileri kelebekteki salon düzenine fotoğraflı, rastgele oturtulur. Yeniden karıştır · Kitapçık (isteğe bağlı A/B) ·
+    Düzenle (öğrenciye: tek otursun / en öne / arkada oturmasın / bugün yok) · Onayla (o ders için sabit; ders bitince kapanır). Salon bir kez çizilip saklanır (zamanlayıcıyla yeniden çizim yok)."""
+    def __init__(self, main):
+        super().__init__(main); self.main = main; self.seat_rects = {}; self.absent = set(); self._on = None
+        self.setAttribute(Qt.WA_DeleteOnClose); self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
+        try: g = (main.screen() if hasattr(main, 'screen') and main.screen() else QApplication.primaryScreen()).geometry()
+        except Exception: g = main.geometry()
+        self.setGeometry(g); self.setWindowState(Qt.WindowFullScreen)
+        import random; self.rnd = random.Random()
+        self.sinif = main.proje_sinif(); self.ros = [(str(n), a) for n, a in main.proje_roster()]
+        self.anahtar = self.ders_anahtari(); self.yok = set(); self.kitapcik = False; self.duzenle = False; self.onayli = False; self.kirli = False; self.sorun = 0; self.yer = {}
+        self.isaret = {}; self.gecmis = set()
+        try:
+            with open(self.dosya('isaret'), encoding='utf-8') as f: self.isaret = {str(n): set(v) for n, v in json.load(f).items() if v}
+        except (OSError, ValueError, AttributeError, TypeError): pass
+        try:
+            with open(self.dosya('son'), encoding='utf-8') as f: son = json.load(f)
+            self.gecmis = {frozenset(map(str, c)) for c in son.get('ciftler', []) if len(c) == 2}
+            if son.get('anahtar') == list(self.anahtar) and isinstance(son.get('yer'), dict):   # bu derste onaylanmış yerleşim: aynen gelir
+                var = {n for n, _ in self.ros}; self.yer = {str(n): int(s_) for n, s_ in son['yer'].items() if str(n) in var}
+                self.kitapcik = bool(son.get('kitapcik')); self.onayli = True
+        except (OSError, ValueError, AttributeError, TypeError): pass
+        st_ = 'QPushButton{background:#13233a;color:white;border:2px solid #2a4468;border-radius:14px;padding:0 22px;font-size:22px;font-weight:700;}QPushButton:pressed{background:#2a4468;}QPushButton:checked{border-color:#22e8ff;color:#7ff6ff;background:#12425a;}'
+        self.b_duz = QPushButton('Düzenle', self); self.b_kit = QPushButton('Kitapçık A / B', self); self.b_kar = QPushButton('⟳  Yeniden karıştır', self)
+        self.b_on = QPushButton('✓  Onayla', self); self.b_kapat = QPushButton('Kapat', self)
+        for b in (self.b_duz, self.b_kit, self.b_kar, self.b_on, self.b_kapat): b.setFocusPolicy(Qt.NoFocus); b.setStyleSheet(st_)
+        self.b_duz.setCheckable(True); self.b_kit.setCheckable(True); self.b_kit.setChecked(self.kitapcik)
+        self.b_on.setStyleSheet(st_ + 'QPushButton{background:#22e8ff;color:#06202a;border-color:#22e8ff;}')
+        self.b_duz.toggled.connect(self.duzenle_degisti); self.b_kit.toggled.connect(self.kitapcik_degisti); self.b_kar.clicked.connect(self.karistir)
+        self.b_on.clicked.connect(self.onayla); self.b_kapat.clicked.connect(self.accept)
+        if not self.onayli: self.karistir()
+        self.dugmeler()
+        self.t = QTimer(self); self.t.setInterval(30000); self.t.timeout.connect(self.ders_bitti_mi); self.t.start()
+    def ders_anahtari(self):
+        try: lk = self.main.lesson_key()
+        except Exception: lk = None
+        return (lk[0], str(lk[1])) if lk else (time.strftime('%Y-%m-%d'), '-')
+    def ders_bitti_mi(self):
+        if self.onayli and self.ders_anahtari() != self.anahtar: self.accept()   # ders bitti: yerleşim kendiliğinden kalkar
+    def dosya(self, ad): return os.path.join(self.main.data_dir, 'dbs-%s-%s.json' % (ad, ''.join(c for c in self.sinif if c.isalnum() or c in '-_')))
+    def yaz(self, ad, veri):
+        try:
+            with open(self.dosya(ad) + '.tmp', 'w', encoding='utf-8') as f: json.dump(veri, f, ensure_ascii=False)
+            os.replace(self.dosya(ad) + '.tmp', self.dosya(ad))
+        except OSError as e: print('dbs:', e)
+    def duzen(self):
+        gelen = [r for r in self.ros if r[0] not in self.yok]; tek = sum(1 for n, _ in gelen if 'tek' in self.isaret.get(n, ()))
+        return seat_layout(dict(sinif=self.sinif, liste=[dict(sira=i + 1) for i in range(max(1, len(gelen) + tek))]))
+    def karistir(self):
+        lay = self.duzen(); gelen = [r for r in self.ros if r[0] not in self.yok]
+        if not lay: self.yer = {}; return
+        self.yer, self.sorun = dbs_yerlestir(gelen, lay['desks'], self.isaret, self.gecmis, self.rnd); self.kirli = False; self._on = None; self.update()
+    def plan(self):
+        ad = dict(self.ros)
+        return dict(tur='salon', sinif=self.sinif, liste=[dict(sira=s_, no=n, ad=ad.get(n, ''), sinif=self.sinif, ders='') for n, s_ in sorted(self.yer.items(), key=lambda kv: kv[1]) if n in ad and n not in self.yok])
+    def duzenle_degisti(self, acik):
+        self.duzenle = acik
+        if not acik and self.kirli: self.karistir()   # işaretler değişti: yeni kurallarla yeniden yerleşir
+        self._on = None; self.dugmeler(); self.update()
+    def kitapcik_degisti(self, acik): self.kitapcik = acik; self._on = None; self.update()
+    def onayla(self):
+        if self.onayli:   # 'Yeni yerleşim': bu dersin onayı kalkar
+            self.onayli = False; self.karistir(); self.dugmeler(); return
+        lay = self.duzen(); sira_no = {s_: n for n, s_ in self.yer.items()}; ciftler = []
+        for d in (lay or {}).get('desks', []):
+            o = [sira_no[x] for x in d[3] if x in sira_no]
+            if len(o) == 2: ciftler.append(o)
+        self.onayli = True; self.b_duz.setChecked(False)
+        self.yaz('son', dict(anahtar=list(self.anahtar), yer=self.yer, kitapcik=self.kitapcik, ciftler=ciftler)); self.gecmis = {frozenset(c) for c in ciftler}
+        self._on = None; self.dugmeler(); self.update()
+    def dugmeler(self):
+        W, H = self.width(), self.height(); k = min(W/1600, H/900); pay = max(16, int(H*.035)); bh = int(58*k); y = int(H - pay - 9*k - bh); x = W - int(30*k)
+        self.b_on.setText('Yeni yerleşim' if self.onayli else '✓  Onayla'); self.b_kar.setVisible(not self.onayli); self.b_duz.setVisible(not self.onayli)
+        for b in (self.b_kapat, self.b_on, self.b_kar, self.b_kit, self.b_duz):
+            if b.isHidden(): continue
+            f = b.font(); f.setPixelSize(max(12, int(22*k))); b.setFont(f); b.setStyleSheet(b.styleSheet().replace('font-size:22px', 'font-size:%dpx' % max(12, int(22*k))))
+            b.setFixedHeight(bh); b.adjustSize(); x -= b.width(); b.move(x, y); x -= int(12*k)
+        self.sol_sinir = x
+    def resizeEvent(self, e): self._on = None; self.dugmeler()
+    def durum_yazisi(self):
+        n = sum(1 for r in self.ros if r[0] not in self.yok)
+        if self.duzenle: return 'Düzenle: öğrenciye dokunun (tek · öne · arkada değil · bugün yok)'
+        s_ = '%d öğrenci' % n + (' · %d yok' % len(self.yok) if self.yok else '')
+        if self.sorun: s_ += ' · %d yer isteği sığmadı' % self.sorun
+        return s_ + (' · ONAYLANDI' if self.onayli else '')
+    def paintEvent(self, e):
+        from PyQt5.QtGui import QPainter, QFont, QFontMetrics
+        p = QPainter(self); W, H = self.width(), self.height(); k = min(W/1600, H/900)
+        on = self._on
+        if on is None or on[0] != (W, H):
+            fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+            def font(px, b=False): f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setWeight(QFont.Bold if b else QFont.Medium); return f
+            pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
+            pay = max(16, int(H*.035)); bar = 76*k
+            try: ders = (lesson_now(self.main.board_info().get('sinif'), self.main.exam_clock()) or {}).get('ders') or ''
+            except Exception: ders = ''
+            pl = self.plan(); lay = self.duzen()
+            try:
+                if pl['liste']: _draw_seatmap(self, q, W, H - bar - pay, k, font, pl, '#5cc8ff', '#5cc8ff', 'Ders Başarı Sınavı' + (' · ' + tr_title(ders) if ders else ''))
+                else: q.setPen(QColor('#9fb3cc')); q.setFont(font(30, True)); q.drawText(QRectF(0, 0, W, H - bar), Qt.AlignCenter, 'Bu sınıf için öğrenci listesi yok.')
+            except Exception as ex: print('dbs çizim:', ex)
+            rects = dict(self.seat_rects); no_sira = {s_: n for n, s_ in self.yer.items()}
+            def foto_r(c):   # karttaki fotoğrafın yeri (_draw_seatmap ile aynı hesap): rozetler ad yazısının üstüne binmesin
+                if not BOARD_PHOTOS: return QRectF(c.right() - 70*k, c.y() + 2*k, 66*k, c.height() - 4*k)
+                pw_ = min((c.height() - 10*k)*.77, c.width()*.45); ph_ = pw_/.77
+                return QRectF(c.x() + 5*k, c.y() + (c.height() - ph_)/2, pw_, ph_)
+            if self.kitapcik and lay:   # A / B: yan yana ve ön-arka komşular farklı
+                xs = sorted({d[0] for d in lay['desks']}); ys = sorted({d[1] for d in lay['desks']})
+                for x_, y_, w_, ns in lay['desks']:
+                    for j, s_ in enumerate(ns):
+                        c = rects.get(s_)
+                        if c is None: continue
+                        a = (xs.index(x_)*2 + j + ys.index(y_)) % 2 == 0; fr = foto_r(c); r_ = QRectF(fr.right() - 30*k, fr.y() + 2*k, 28*k, 28*k)
+                        q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff' if a else '#ffe14d')); q.drawEllipse(r_); q.setPen(QColor('#06202a')); q.setFont(font(19, True)); q.drawText(r_, Qt.AlignCenter, 'A' if a else 'B')
+            if self.duzenle:   # işaretler yalnız düzenlerken görünür
+                kisa = {'tek': 'TEK', 'on': 'ÖN', 'arka': 'ARKA DEĞİL'}
+                for s_, c in rects.items():
+                    isr = self.isaret.get(no_sira.get(s_), ())
+                    if not isr: continue
+                    yz = ' · '.join(kisa[a] for a, _ in DBS_ISARET if a in isr); fr = foto_r(c); f_ = font(13, True)
+                    while f_.pixelSize() > 8 and QFontMetrics(f_).horizontalAdvance(yz) > fr.width() - 6*k: f_.setPixelSize(f_.pixelSize() - 1)
+                    r_ = QRectF(fr.x(), fr.bottom() - 22*k, fr.width(), 22*k); q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff')); q.drawRoundedRect(r_, 6*k, 6*k)
+                    q.setPen(QColor('#06202a')); q.setFont(f_); q.drawText(r_, Qt.AlignCenter, yz)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 240)); q.drawRect(QRectF(0, H - bar - pay, W, bar + pay))
+            dr = QRectF(30*k, H - bar - pay, max(60, getattr(self, 'sol_sinir', W) - 50*k), bar); yz = self.durum_yazisi(); f_ = font(24, True)
+            while f_.pixelSize() > 11 and QFontMetrics(f_).horizontalAdvance(yz) > dr.width(): f_.setPixelSize(f_.pixelSize() - 1)
+            q.setFont(f_); q.setPen(QColor('#7ff6ff' if not self.sorun or self.duzenle else '#ffc145')); q.drawText(dr, Qt.AlignLeft | Qt.AlignVCenter, yz)
+            q.end(); on = self._on = ((W, H), pm, rects)
+        p.drawPixmap(e.rect(), on[1], e.rect()); p.end()
+    def mousePressEvent(self, e):
+        if not self.duzenle or self.onayli or self._on is None: return
+        no_sira = {s_: n for n, s_ in self.yer.items()}; pos = QPointF(e.pos())
+        for s_, c in self._on[2].items():
+            if c.contains(pos) and s_ in no_sira:
+                n = no_sira[s_]; d = DbsIsaret(self, dict(self.ros).get(n, ''), self.isaret.get(n, set()), n in self.yok)
+                if d.exec_():
+                    isr, yok = d.sonuc()
+                    if isr != self.isaret.get(n, set()) or yok != (n in self.yok): self.kirli = True
+                    if isr: self.isaret[n] = isr
+                    else: self.isaret.pop(n, None)
+                    (self.yok.add if yok else self.yok.discard)(n)
+                    self.yaz('isaret', {a: sorted(v) for a, v in self.isaret.items()})
+                    if yok: self.karistir()   # gelmeyen hemen çıkar (yeri boş kalmasın)
+                    self._on = None; self.update()
+                return
+
 class DenemeDialog(QDialog):
     """Öğretmenler odası: seçilen salon tahtaları birkaç dakikalığına sınav anındaki gibi sınav moduna geçer (tanıtım/deneme).
     Öğrenci listeleri en son kelebek planından; yoklama ve mesajlar 'Deneme' adıyla gider, gelmeyenler raporuna/mazerete girmez."""
@@ -11629,16 +11917,23 @@ def draw_anket_list(p, W, H, k, font, a, sinif, answers, bottom):
         r = QRectF(30*k + (i % cols)*(cw + gap), top + (i//cols)*(ch + gap), cw, ch); dn = no in cev
         p.setPen(QPen(QColor('#2fbf71'), 3*k) if dn else Qt.NoPen); p.setBrush(QColor(255, 255, 255, 16)); p.drawRoundedRect(r, 12*k, 12*k)
         ph = QRectF(r.x() + 7*k, r.y() + 7*k, r.width() - 14*k, r.height() - 46*k)
+        pw_ = min(ph.width(), ph.height()*0.78)   # K-481: fotoğraf dik (vesikalık) oranında durur; baş/çene kesilmez
+        ph = QRectF(ph.center().x() - pw_/2, ph.y(), pw_, ph.height())
         draw_photo(p, ph, no, ad, k)
         if dn or not ok:
             p.setPen(Qt.NoPen); p.setBrush(QColor(13, 23, 38, 150 if dn else 200)); p.drawRoundedRect(ph, 6*k, 6*k)
-        text(QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k, 34*k), QFontMetrics(fN).elidedText(ad, Qt.ElideRight, int(r.width() - 10*k)), fN, '#ffffff' if ok else '#6f8099', Qt.AlignCenter)
+        fn_ = fN; nr = QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k, 36*k)   # K-481: ad kesilmez — sığmazsa küçülür, yine sığmazsa iki satır
+        for b_ in (15, 14, 13, 12):
+            fn_ = fN if b_ == 15 else font(b_, True)
+            if QFontMetrics(fn_).horizontalAdvance(ad) <= nr.width() - 4: break
+        else: fn_ = font(11, True)
+        text(nr, ad, fn_, '#ffffff' if ok else '#6f8099', Qt.AlignCenter | Qt.TextWordWrap)
         if dn:
             c_ = QRectF(r.right() - 46*k, r.y() + 8*k, 38*k, 38*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#2fbf71')); p.drawEllipse(c_)
             p.setPen(QPen(QColor('#06240f'), 4.5*k)); x0, y0 = c_.x(), c_.y()   # tik (yazı tipinden bağımsız)
             p.drawLine(QPointF(x0 + 10*k, y0 + 20*k), QPointF(x0 + 17*k, y0 + 27*k)); p.drawLine(QPointF(x0 + 17*k, y0 + 27*k), QPointF(x0 + 29*k, y0 + 12*k))
         if not ok:
-            b = QRectF(ph.x() + 6*k, ph.center().y() - 14*k, ph.width() - 12*k, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#0b1422')); p.drawRoundedRect(b, 7*k, 7*k)
+            b = QRectF(r.x() + 8*k, ph.center().y() - 14*k, r.width() - 16*k, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#0b1422')); p.drawRoundedRect(b, 7*k, 7*k)
             text(b, 'Katılmıyor', font(14, True), '#c9d6ea', Qt.AlignCenter)
         rects[(no, ad, ok)] = r
     # alt şerit: ilerleme
@@ -12583,7 +12878,7 @@ class YeniPanel(QWidget):
     def bolum(self, ad, ikon, ogeler, lay):
         b = QPushButton('  ' + ad + '   ˅'); b.setObjectName('bolum'); b.setIcon(tool_icon(ikon)); b.setIconSize(QSize(22, 22)); b.setCheckable(True)
         b.setFocusPolicy(Qt.NoFocus); b.setMinimumHeight(44); lay.addWidget(b)
-        ic = self.izgara(ogeler, 2); ic.hide(); lay.addWidget(ic)
+        ic = ogeler if isinstance(ogeler, QWidget) else self.izgara(ogeler, 2); ic.hide(); lay.addWidget(ic)
         def ac(acik, b=b, ic=ic):
             for b2, ic2 in self.bolumler:   # aynı anda tek bölüm açık
                 if b2 is not b: b2.setChecked(False); ic2.hide(); b2.setText(b2.text().replace('˄', '˅'))
@@ -12615,11 +12910,24 @@ class YeniPanel(QWidget):
         l.addWidget(self.izgara([self.t_kalem, self.i_neon, self.t_fos, self.t_sil, self.t_tasi, self.t_sek, self.t_sec, self.i_kareli, self.i_postit]))
         self.bolumler = []; self.i_uclar = []
         self.i_perde = self.ic('Perde', 'Perde', lambda: m.curtain_button.click(), True); self.i_spot = self.ic('Spot', 'Spot ışığı', lambda: m.spot_button.click(), True)
-        self.bolum('Akıllı araçlar', 'Perde', [self.i_perde, self.i_spot, self.ic('Alkış', 'Alkış', m.celebrate), self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink)], l)
+        self.i_atlas = self.ic("Atlas'a sor", '', self.atlas_ac); self.i_atlas.setIcon(QIcon(ATLAS_PNG)); self.i_atlas.setIconSize(QSize(26, 26)); self.i_atlas.setToolTip("Atlas'a sor: Atlas yanda açılır")   # K-480
+        # K-485: beş düğme iki satırda (üstte 3, altta 2) — üçüncü satır panel saatini küçültüyordu
+        i_alkis = self.ic('Alkış', 'Alkış', m.celebrate); aw = QWidget(); ag = QGridLayout(aw); ag.setContentsMargins(0, 0, 0, 0); ag.setSpacing(6)
+        for n_, b_ in enumerate((self.i_perde, self.i_spot, i_alkis)): b_.setText(' ' + b_.text().strip()); ag.addWidget(b_, 0, n_*2, 1, 2)
+        ag.addWidget(self.ic('Ekrana yaz', 'Ekrana yaz', m.screen_ink), 1, 0, 1, 3); ag.addWidget(self.i_atlas, 1, 3, 1, 3)
+        for c_ in range(6): ag.setColumnStretch(c_, 1)
+        self.bolum('Akıllı araçlar', 'Perde', aw, l)
         self.satir('Günün soruları', 'Günün soruları', m.open_daily, l)   # K-373: ana panelde
         oy = QPushButton('  Oyunlar'); oy.setObjectName('oyun'); oy.setIcon(tool_icon('Oyunlar', '#04202a')); oy.setIconSize(QSize(22, 22)); oy.setMinimumHeight(44)
         oy.setFocusPolicy(Qt.NoFocus); oy.setToolTip('Oyunlar: satranç, dama, tavla, mangala, XOX'); oy.clicked.connect(lambda checked=False: m.open_games()); l.addWidget(oy)   # K-372: öğrenciler görsün
         l.addStretch(1); return s
+    def atlas_ac(self):
+        """K-480: Akıllı araçlar → Atlas'a sor: Atlas'ın yandaki paneli açılır (açıksa öne gelir)."""
+        m = self.m
+        if getattr(m, '_sinav_su_an', False): m.show_toast("Sınav saatinde Atlas'a sor kapalı."); return
+        pn = getattr(m, 'atlas_panel', None)
+        if pn is not None and pn.isVisible(): pn.raise_(); return
+        m.atlas_sor_ac()
     def satir(self, ad, ikon, fn, lay, secilir=False):
         b = QPushButton('  ' + ad); b.setObjectName('bolum'); b.setIcon(tool_icon(ikon)); b.setIconSize(QSize(22, 22)); b.setMinimumHeight(44)
         b.setCheckable(secilir); b.setFocusPolicy(Qt.NoFocus); b.clicked.connect(lambda checked=False, f=fn: f()); lay.addWidget(b); return b
@@ -12634,7 +12942,8 @@ class YeniPanel(QWidget):
     def sayfa_okul(self):
         m = self.m; s = QWidget(); l = QVBoxLayout(s); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(8)
         og = [self.tile('Oyunlar', 'Oyunlar', m.open_games), self.tile('Anket', 'Anket', m.open_anket), self.tile('Rastgele öğrenci', 'Okul araçları', m.open_rastgele, kisa='Rastgele'),
-              self.tile('Rehberlik', 'Rehberlik', lambda: RehberlikMenu(m).exec_()), self.tile('Sınav yerleri', 'Sayaç', m.open_preview, kisa='Sınav')]
+              self.tile('Rehberlik', 'Rehberlik', lambda: RehberlikMenu(m).exec_()), self.tile('Sınav yerleri', 'Sayaç', m.open_preview, kisa='Sınav'),
+              self.tile('DBS yerleşimi (Ders Başarı Sınavı)', 'Okul araçları', m.open_dbs, kisa='DBS')]   # K-488: PDF / tahta kipinde Okul sekmesinden
         self.t_kontrol = self.tile('Tahta Kontrol (web panel)', 'Ayarlar', self.kontrol_ac, kisa='Kontrol'); og.append(self.t_kontrol)   # K-377: Öğretmenler odasında
         l.addWidget(self.izgara(og)); l.addStretch(1); return s
     def kontrol_ac(self):
@@ -12722,6 +13031,7 @@ class AtlasYuzen(QWidget):
     def __init__(self, main):
         super().__init__(main.scroll); self.main = main; self.setFixedSize(self.BOY, self.BOY); self.setAttribute(Qt.WA_TranslucentBackground)
         self.maskot = AtlasMaskot(self); self.maskot.setGeometry(8, 6, self.BOY - 16, self.BOY - 12); self.maskot.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.maskot.dur = main.kalem_yaziyor   # K-482
         self.etiket = QLabel("Atlas'a sor", main.scroll); self.etiket.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.etiket.setStyleSheet('QLabel{background:rgba(8,20,40,235);color:#7ff6ff;border:2px solid #22e8ff;border-radius:16px;padding:6px 16px;font-size:20px;font-weight:800;}')
         self.etiket.adjustSize(); self.etiket.hide()
@@ -12745,6 +13055,8 @@ class AtlasYuzen(QWidget):
         except Exception: pass
         return getattr(m, 'tool', '') != 'atlas'
     def durum(self):
+        if self.solgun and getattr(self.main.board, 'active', None) is not None:   # K-483: kalem basılıyken Atlas hiçbir iş yapmaz (yalnız resim)
+            self._son_aktif = time.monotonic(); return
         g = self.gorunmeli()
         if g != self.isVisible():
             self.setVisible(g)
@@ -12757,12 +13069,7 @@ class AtlasYuzen(QWidget):
         if aktif: self._son_aktif = time.monotonic()
         sol = aktif or time.monotonic() - self._son_aktif < 1.2   # kalemle yazılırken solar, dokunuş tahtaya geçer
         if sol != self.solgun:
-            self.solgun = sol; self.setAttribute(Qt.WA_TransparentForMouseEvents, sol)
-            fx = self.graphicsEffect()
-            if fx is None:
-                from PyQt5.QtWidgets import QGraphicsOpacityEffect
-                fx = QGraphicsOpacityEffect(self); self.setGraphicsEffect(fx)
-            fx.setOpacity(0.25 if sol else 1.0)
+            self.solgun = sol; self.setAttribute(Qt.WA_TransparentForMouseEvents, sol)   # K-483: solma efekti kaldırıldı (her boyamada ara görüntü üretiyordu); yazarken yalnız dokunuş tahtaya geçer
             if sol: self.etiket.hide()
     def etiket_goster(self, sn=5000):
         if not self.isVisible(): return
@@ -12818,6 +13125,13 @@ class AtlasYuzen(QWidget):
         # K-368: ekranda görünen her şey (PDF'teki sorular + öğretmenin yazdıkları) Atlas'a gider
         q = b.visibleRegion().boundingRect().adjusted(4, 4, -4, -4) & b.rect()
         if q.width() < 16 or q.height() < 16: m.atlas_dugme(); return
+        # K-479: panel açılınca ekranda o an görünen bölüm (çözüm alanında soru kartı) kalan alana sığdırılır; hiçbir şey panelin altında kalmaz
+        try:
+            o_ = getattr(m, 'solution_origin', None)
+            if o_ and o_.get('card') and ((m.doc.metadata or {}).get('keywords') or '') == 'UMAL-solution':
+                c_ = o_['card']; self._hedef = (id(m.doc), m.page, QRectF(c_[0] - 10, c_[1] - 10, c_[2] - c_[0] + 20, c_[3] - c_[1] + 20))
+            else: self._hedef = (id(m.doc), m.page, QRectF(q.x()/k, q.y()/k, q.width()/k, q.height()/k))
+        except Exception: self._hedef = None
         b._temiz_cek = True
         try: self.pix = b.grab(q)
         finally: b._temiz_cek = False
@@ -12939,6 +13253,7 @@ class AtlasYuzen(QWidget):
         if t != 'Başka bir şey sor…' and 'rafi' in t and self.grafik:   # grafik: Atlas'ın okuduğu fonksiyonlar Grafik çizicide (soru harcamaz)
             if getattr(m, 'atlas_panel', None) is None: m.atlas_panel = AtlasPanel(m)
             m.atlas_panel.grafik = list(self.grafik); m.atlas_panel.grafik_ciz(); return
+        m.atlas_sigdir_hedef = getattr(self, '_hedef', None)   # K-479
         m.atlas_sor_ac(pix); pn = m.atlas_panel
         if t != 'Başka bir şey sor…': QTimer.singleShot(0, lambda: pn.sor(t))
 
@@ -12987,6 +13302,11 @@ class AtlasMaskot(QWidget):
     def showEvent(self, e): self.zaman.start(); super().showEvent(e)
     def hideEvent(self, e): self.zaman.stop(); super().hideEvent(e)
     def tik(self):
+        d = getattr(self, 'dur', None)   # K-482: kalem yazarken maskot canlanmaz (ekran her 40 ms'de yeniden boyanmasın)
+        if d is not None:
+            try:
+                if d(): return
+            except Exception: pass
         h = self.IFADE[self.ad]; self.su = [a + (b - a)*0.18 for a, b in zip(self.su, h)]; self.update()
     def paintEvent(self, e):
         if self.govde.isNull(): return
@@ -13618,7 +13938,7 @@ class AtlasPanel(QFrame):
         from PyQt5.QtWidgets import QTextBrowser
         v = QVBoxLayout(self); v.setContentsMargins(18, 14, 18, 14); v.setSpacing(10)
         ust = QHBoxLayout(); ust.setSpacing(10)
-        self.maskot = AtlasMaskot(self); self.maskot.setFixedSize(150, 152); ust.addWidget(self.maskot)
+        self.maskot = AtlasMaskot(self); self.maskot.setFixedSize(150, 152); ust.addWidget(self.maskot); self.maskot.dur = getattr(self.main, 'kalem_yaziyor', None)
         bas = QVBoxLayout(); bas.setSpacing(2)
         t = QLabel('Atlas'); t.setStyleSheet('font-size:30px;font-weight:800;color:#7ff6ff;'); bas.addWidget(t); self.baslik = t
         self.ders = QLabel(''); self.ders.setStyleSheet('font-size:17px;color:#9fb3cc;'); bas.addWidget(self.ders)
@@ -13677,6 +13997,7 @@ class AtlasPanel(QFrame):
         return (d.get('ders') or '') if d.get('durum') == 'ders' else ''
     def ac(self, resim=None):
         self.resim = resim; ders = self.ders_bilgisi(); self.brans = ders_bransi(ders)
+        self.hedef = getattr(self.main, 'atlas_sigdir_hedef', None) if (resim is not None and not resim.isNull()) else None; self.main.atlas_sigdir_hedef = None   # K-479
         self.ders.setText((ders or 'Ders dışı') + (' · ' + self.brans if self.brans and self.brans not in ders else ''))
         for b in self.secenek_dug: b.deleteLater()
         self.secenek_dug = []
@@ -13949,7 +14270,8 @@ class OkulAraclari(QDialog):
         items = (('Anket', 'Anket' + ('' if an else '\nAçık anket yok'), an, self.anket),
                  ('Oyunlar', 'Oyunlar\nSatranç · Dama · Tavla · Mangala · XOX', True, self.oyun),
                  ('Okul araçları', 'Rastgele öğrenci\nTahtaya kim kalkacak?', True, self.rastgele),
-                 ('Rehberlik', 'Rehberlik\nProje tercihi' + (' · Bilgi formu' if rh else ''), pj, self.rehberlik))   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
+                 ('Rehberlik', 'Rehberlik\nProje tercihi' + (' · Bilgi formu' if rh else ''), pj, self.rehberlik),
+                 ('Okul araçları', 'DBS yerleşimi\nDers Başarı Sınavı: fotoğraflı rastgele oturma', True, self.dbs))   # K-486   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
         for i, (ic, txt, on, fn) in enumerate(items):
             b = QPushButton('  ' + txt); b.setFocusPolicy(Qt.NoFocus); b.setMinimumSize(340, 110)
             b.setIcon(QIcon(ATLAS_PNG) if ic == 'Atlas' else tool_icon(ic)); b.setIconSize(QSize(56, 56)); b.setEnabled(on)
@@ -13963,6 +14285,7 @@ class OkulAraclari(QDialog):
     def oyun(self): self.accept(); QTimer.singleShot(0, self.main.open_games)
     def proje(self): self.accept(); QTimer.singleShot(0, self.main.open_proje)
     def rastgele(self): self.accept(); QTimer.singleShot(0, self.main.open_rastgele)
+    def dbs(self): self.accept(); QTimer.singleShot(0, self.main.open_dbs)
     def atlas(self): self.accept(); QTimer.singleShot(0, lambda: self.main.atlas_sor_ac())
 
 class RehberlikMenu(QDialog):
@@ -17076,7 +17399,7 @@ def main():
     app.applicationStateChanged.connect(window.uygulama_durumu)   # K-453: öğretmen başka programa geçti mi
     def _sk_tik():   # K-459: Atlas öndeyken Pardus ekran klavyesi hiç görünmesin (yazı alanı olmayan ekranlarda da açılıyordu); yazarken bekler
         try:
-            if QApplication.applicationState() == Qt.ApplicationActive and getattr(window.board, 'active', None) is None: sistem_klavyesini_gizle()
+            if QApplication.applicationState() == Qt.ApplicationActive and not window.kalem_yaziyor(): sistem_klavyesini_gizle()   # K-484: yazarken ve bıraktıktan 1,5 sn sonrasına kadar tarama yok
         except Exception: pass
     window._bellek_zaman = QTimer(window); window._bellek_zaman.timeout.connect(lambda: bellek_bekcisi(window)); window._bellek_zaman.start(20000)   # K-461
     window._sk_zaman = QTimer(window); window._sk_zaman.timeout.connect(_sk_tik); window._sk_zaman.start(700)   # K-461: 2 sn → 0,7 sn

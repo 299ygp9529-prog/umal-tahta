@@ -19,12 +19,12 @@ def a1():
     oz = dict(sicaklik=14, his=13, durum='Parçalı bulutlu', ikon='parcali', yagis=10, ruzgar=15, kotu=False, uyari='')
     w.hava_kart = tk.HavaKart(w, oz); w.hava_kart.show(); w.hava_kart.raise_(); app.processEvents()
 def a2():
-    subprocess.run(['import', '-window', 'root', '/tmp/onizleme/hava-sakin.png'])
+    subprocess.run(['env','DISPLAY=:7','import', '-window', 'root', '/tmp/onizleme/hava-sakin.png'])
     t0 = time.perf_counter(); w.hava_kart.update(); app.processEvents(); print('yeniden boyama %.1f ms' % ((time.perf_counter() - t0)*1000)); w.hava_kart.kapat(); app.processEvents()
     oz = dict(sicaklik=9, his=6, durum='Yağmurlu', ikon='yagmur', yagis=85, ruzgar=22, kotu=True, uyari='Akşama yağmur bekleniyor, şemsiyenizi unutmayın')
     w.hava_kart = tk.HavaKart(w, oz); w.hava_kart.show(); w.hava_kart.raise_(); app.processEvents()
 def a3():
-    subprocess.run(['import', '-window', 'root', '/tmp/onizleme/hava-yagmur.png'])
+    subprocess.run(['env','DISPLAY=:7','import', '-window', 'root', '/tmp/onizleme/hava-yagmur.png'])
     from PyQt5.QtTest import QTest
     QTest.mouseClick(w.hava_kart, 1); app.processEvents()
     try: v = w.hava_kart.isVisible()

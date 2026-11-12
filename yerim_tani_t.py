@@ -47,6 +47,19 @@ def a1():
     hs = tk.HeartOverlay.show
     def sh(self): say2['overlay show'] += 1; return hs(self)
     tk.HeartOverlay.show = sh
+    say3 = collections.Counter()
+    def sarU(cls, ad):
+        u0 = cls.update
+        def u1(self, *a):
+            st = traceback.extract_stack(limit=5); say3[ad + ' ← ' + ' < '.join('%s:%d' % (f.name, f.lineno) for f in st[:-1][-3:])] += 1; return u0(self, *a)
+        cls.update = u1
+        r0 = cls.repaint
+        def r1(self, *a): say3[ad + ' repaint'] += 1; return r0(self, *a)
+        cls.repaint = r1
+    for cls, ad in ((tk.Board, 'Board'), (type(w.scroll), 'Scroll'), (tk.Window, 'Window'), (tk.QPushButton, 'Düğme'), (tk.QLabel, 'Etiket'), (tk.QWidget, 'QWidget')): sarU(cls, ad)
+    bp = tk.Board.paintEvent; bc = [0]
+    def bp1(self, e): bc[0] += 1; return bp(self, e)
+    tk.Board.paintEvent = bp1
     rc = collections.Counter(); pe0 = tk.ExamScreen.paintEvent
     def pe1(self, e): r = e.rect(); rc[(r.x(), r.y(), r.width(), r.height())] += 1; return pe0(self, e)
     tk.ExamScreen.paintEvent = pe1
@@ -55,6 +68,7 @@ def a1():
     tk.HeartOverlay.paintEvent = hp1
     bekle(2500); n0 = len(olc['es']); bekle(3000); bos = olc['es'][n0:]
     print('boyama bölgeleri:', rc.most_common(5), '| kalp katmanı boyama', hc[0], '| ExamScreen geo', es.geometry().getRect(), 'opak', es.testAttribute(tk.Qt.WA_OpaquePaintEvent), 'ebeveyn', type(es.parent()).__name__, [(type(c).__name__, c.geometry().getRect(), c.isVisible()) for c in es.children() if isinstance(c, tk.QWidget) and c.isVisible()][:8])
+    print('alttaki update:', say3.most_common(8), '| Board boyama', bc[0])
     print('update çağıranlar:', say.most_common(6)); print(say2, 'anim_timer', getattr(es, 'anim_timer', None) and (es.anim_timer.isActive(), es.anim_timer.interval()), 'faz', es.st.get('phase'))
     print('timers:', [(type(t.parent()).__name__, t.interval()) for t in w.findChildren(tk.QTimer) if t.isActive() and t.interval() < 200])
     print('boşta 3 sn: %d boyama, ort %.1f ms, en çok %.1f ms' % (len(bos), sum(d for _, d in bos)/max(1, len(bos)), max([d for _, d in bos] or [0])))

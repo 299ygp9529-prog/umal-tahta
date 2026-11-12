@@ -53,11 +53,11 @@ def senaryo():
         if x is not None: x.hide()
     w.new_board(); bekle(1500)
     # kelebek: ilk indirme (çözülür) ve sonraki iki indirme (plan aynı)
-    w.kelebek = None; w.kelebek_new = None; w.kelebek_busy = False; w.kelebek_tick(); bekle(4000); w.take_kelebek()
+    tk._PHOTOS['data'] = {}; w.kelebek = {}; w.kelebek_new = None; w.kelebek_busy = False; w.kelebek_tick(); bekle(5000); w.take_kelebek()
     print('plan yüklendi:', len((w.kelebek or {}).get('planlar', [])), 'sınav')
     w.exam_tick(); bekle(500)
     olc('1) boş tahta, sınav haftası', 10000)
-    def indir(): w.kelebek_busy = False; w.kelebek_tick()
+    def indir(): w.kelebek_busy = False; w.kelebek_tick(); QTimer.singleShot(2500, w.take_kelebek)
     olc('2) 2 dk\'lık kelebek indirmesi', 4000, indir)
     olc('3) indirme tekrar (plan aynı)', 4000, indir)
     w.open_preview(); bekle(800); es = w.exam_screen

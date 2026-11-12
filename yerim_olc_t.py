@@ -18,8 +18,8 @@ rnd.shuffle(ogr); salonlar = {s: [] for s in SAL}; siniflar = {s: [] for s in SA
 for i, o in enumerate(ogr):
     s = SAL[i % 30]; sira = len(salonlar[s]) + 1; r = dict(sira=sira, ad=o['ad'], sinif=o['sinif'], no=o['no'], ders='İNGİLİZCE'); salonlar[s].append(r); siniflar[o['sinif']].append(dict(ad=o['ad'], salon=s, sira=sira, no=o['no'], ders='İNGİLİZCE'))
 yarin = datetime.date.today() + datetime.timedelta(days=1)
-tk._PHOTOS['data'] = {o['no']: foto(i) for i, o in enumerate(ogr)}; tk._PHOTOS['pix'].clear()
-w.kelebek = dict(planlar=[dict(tarih=yarin.isoformat(), ders='7. Ders', sinav='İNGİLİZCE', gozcu={}, salonlar=salonlar, siniflar=siniflar)], ogrenciler=ogr); w.kelebek_new = None
+FD = {o['no']: foto(i) for i, o in enumerate(ogr)}
+KB = dict(planlar=[dict(tarih=yarin.isoformat(), ders='7. Ders', sinav='İNGİLİZCE', gozcu={}, salonlar=salonlar, siniflar=siniflar)], ogrenciler=ogr)
 olc = dict(es=[], yd=[]); 
 def sar(cls, ad):
     eski = cls.paintEvent
@@ -33,6 +33,7 @@ def a1():
     for nm in ('welcome', 'intro'):
         x = getattr(w, nm, None)
         if x is not None: x.hide()
+    print('hazır:', hasattr(w, 'exam_screen')); w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
     t0 = time.perf_counter(); w.open_preview(); app.processEvents(); es = w.exam_screen
     print('sınav yerleri açılışı %.0f ms | görünür %s | koltuk %d' % ((time.perf_counter() - t0)*1000, es is not None and es.isVisible(), len(getattr(es, 'seat_rects', {}) or {})))
     bekle(2500); n0 = len(olc['es']); bekle(3000); bos = olc['es'][n0:]
@@ -50,4 +51,4 @@ def a1():
         print('%d) dokunuş (Yerimi bul çıkar) %.0f ms | salon açılışı: ilk çizime kadar %.0f ms (çizim %.0f ms) | pencere açıkken sınav ekranı %d kez boyandı (toplam %.0f ms) | kapanış %.0f ms | dönüşte 1,5 sn: %d boyama, en çok %.0f ms, toplam %.0f ms'
               % (tur + 1, (t1 - t0)*1000, (ilk[0] - t2)*1000, ilk[1], len(arada), sum(d for _, d in arada), (t3 - kapat[0])*1000, len(son), max([d for _, d in son] or [0]), sum(d for _, d in son)))
     print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
-QTimer.singleShot(2000, a1); app.exec_()
+QTimer.singleShot(8000, a1); app.exec_()

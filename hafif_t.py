@@ -23,6 +23,7 @@ blob = b'UK1' + nonce + hmac.new(K, nonce + ct, hashlib.sha256).digest() + ct
 open('/tmp/plan-sahte.bin', 'wb').write(blob); print('sahte plan %.1f MB' % (len(blob)/1e6))
 tk.KELEBEK_URLS = ('file:///tmp/plan-sahte.bin',); tk.KELEBEK_FOTO_URLS = ('file:///tmp/yok.bin',)
 w = tk.Window(); w.showFullScreen(); app.processEvents(); w.board_info = lambda: {'sinif': '9-A'}
+sabit = datetime.datetime.combine(datetime.date.today(), datetime.time(10, 0, 5)); w.exam_clock = lambda: sabit
 w.start_messages(); w.start_state_reports() if hasattr(w, 'start_state_reports') else None
 # --- ölçüm araçları: boyama sayısı (bütün pencereler), CPU, ekran iş parçacığının en uzun takılması
 class Say(QObject):
@@ -60,6 +61,7 @@ def senaryo():
     olc('2) 2 dk\'lık kelebek indirmesi', 4000, indir)
     olc('3) indirme tekrar (plan aynı)', 4000, indir)
     w.open_preview(); bekle(800); es = w.exam_screen
+    if es is None: print('sınav yerleri açılmadı'); app.quit(); return
     olc('4) sınav yerleri ekranı açık', 8000)
     def yer():
         sira = sorted(es.seat_rects)[5]; c = es.seat_rects[sira]; es.yerim_sor(QPoint(int(c.center().x()), int(c.center().y()))); app.processEvents()

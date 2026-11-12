@@ -9701,7 +9701,7 @@ class YerimEkran(QWidget):
         p.setPen(QPen(QColor('#22e8ff'), 2.5*k)); p.setBrush(QColor(8, 20, 40, 235)); p.drawRoundedRect(kr, 22*k, 22*k)
         y = kr.y() + 26*k
         if kayit is not None and BOARD_PHOTOS:
-            fw = 210*k; fh = fw/.77; fr = QRectF(kr.center().x() - fw/2, y, fw, fh)
+            fw = min(190*k, (kr.height() - 420*k)*.77); fh = fw/.77; fr = QRectF(kr.center().x() - fw/2, y, fw, fh)
             p.setPen(Qt.NoPen); p.setBrush(QColor(255, 255, 255, 230)); p.drawRoundedRect(fr.adjusted(-2*k, -2*k, 2*k, 2*k), 8*k, 8*k); draw_photo(p, fr, kayit.get('no'), kayit.get('ad', ''), k); y = fr.bottom() + 18*k
         if kayit is not None:
             ad = tr_name(kayit.get('ad', '')); f_ = font(32, True); nr = QRectF(kr.x() + 16*k, y, kr.width() - 32*k, 92*k)
@@ -9710,7 +9710,7 @@ class YerimEkran(QWidget):
         yaz(QRectF(kr.x(), y, kr.width(), 40*k), 'Salon', font(24), '#9fb3cc'); y += 38*k
         yaz(QRectF(kr.x(), y, kr.width(), 84*k), salon, font(72, True), '#7ff6ff'); y += 92*k
         yaz(QRectF(kr.x(), y, kr.width(), 40*k), 'Sıra', font(24), '#9fb3cc'); y += 38*k
-        yaz(QRectF(kr.x(), y, kr.width(), 96*k), str(self.sira), font(88, True), '#ffe14d')
+        yaz(QRectF(kr.x(), y, kr.width(), min(96*k, kr.bottom() - y - 8*k)), str(self.sira), font(80, True), '#ffe14d')
         p.setPen(Qt.NoPen); p.setBrush(QColor(10, 18, 30, 240)); p.drawRect(QRectF(0, H - 64*k - pay, W, 64*k + pay))
         yaz(QRectF(0, H - 64*k - pay, W, 64*k), 'Senin yerin: Salon %s  ·  Sıra %s      (kapatmak için dokun)' % (salon, self.sira), font(26, True), '#7ff6ff')
         p.end(); return pm

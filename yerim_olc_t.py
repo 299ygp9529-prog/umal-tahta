@@ -33,7 +33,7 @@ def a1():
     for nm in ('welcome', 'intro'):
         x = getattr(w, nm, None)
         if x is not None: x.hide()
-    print('hazır:', hasattr(w, 'exam_screen')); w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
+    w.start_messages(); app.processEvents(); w.kelebek = KB; w.kelebek_new = None; tk._PHOTOS['data'] = FD; tk._PHOTOS['pix'].clear()
     t0 = time.perf_counter(); w.open_preview(); app.processEvents(); es = w.exam_screen
     print('sınav yerleri açılışı %.0f ms | görünür %s | koltuk %d' % ((time.perf_counter() - t0)*1000, es is not None and es.isVisible(), len(getattr(es, 'seat_rects', {}) or {})))
     bekle(2500); n0 = len(olc['es']); bekle(3000); bos = olc['es'][n0:]
@@ -51,4 +51,4 @@ def a1():
         print('%d) dokunuş (Yerimi bul çıkar) %.0f ms | salon açılışı: ilk çizime kadar %.0f ms (çizim %.0f ms) | pencere açıkken sınav ekranı %d kez boyandı (toplam %.0f ms) | kapanış %.0f ms | dönüşte 1,5 sn: %d boyama, en çok %.0f ms, toplam %.0f ms'
               % (tur + 1, (t1 - t0)*1000, (ilk[0] - t2)*1000, ilk[1], len(arada), sum(d for _, d in arada), (t3 - kapat[0])*1000, len(son), max([d for _, d in son] or [0]), sum(d for _, d in son)))
     print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
-QTimer.singleShot(8000, a1); app.exec_()
+QTimer.singleShot(2500, a1); app.exec_()

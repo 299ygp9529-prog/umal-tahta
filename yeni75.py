@@ -13593,7 +13593,8 @@ class AtlasPanel(QFrame):
         self.sec_b = QPushButton('▢  Tahtadan soru seç'); self.sec_b.setFocusPolicy(Qt.NoFocus); self.sec_b.setMinimumHeight(50)
         self.sec_b.setStyleSheet('QPushButton{border:1.5px dashed #22e8ff;color:#7ff6ff;border-radius:14px;font-size:19px;}')
         self.sec_b.clicked.connect(self.soru_sec); kv.addWidget(self.sec_b); v.addWidget(self.kontrol)
-        self.metin = AtlasCevap(self); v.addWidget(self.metin, 1)   # K-348/349: el yazısı, formüller kitap düzeninde
+        self.metin = AtlasCevap(self)   # K-348/349: el yazısı, formüller kitap düzeninde
+        self.orta = QHBoxLayout(); self.orta.setSpacing(14); self.orta.addWidget(self.metin, 1); v.addLayout(self.orta, 1)   # K-474: tam ekranda soru solda, çözüm sağda
         # K-346: iki satır düğme (dar panelde yazılar sığsın): Tahtaya yaz · Grafiği çiz / Yeniden sor · Daha ayrıntılı
         alt = QGridLayout(); alt.setHorizontalSpacing(8); alt.setVerticalSpacing(8)
         self.yaz_b = QPushButton('Tahtaya yaz'); self.yaz_b.setObjectName('birincil'); self.yaz_b.setFocusPolicy(Qt.NoFocus); self.yaz_b.clicked.connect(self.tahtaya_yaz); self.yaz_b.setEnabled(False); alt.addWidget(self.yaz_b, 0, 0)
@@ -13648,6 +13649,12 @@ class AtlasPanel(QFrame):
         self.maskot.setFixedSize(*((170, 172) if t else (150, 152)))
         self.baslik.setStyleSheet('font-size:%dpx;font-weight:800;color:#7ff6ff;' % (40 if t else 30))
         v, ust = self.v_ana, self.ust_sat   # K-363: tam ekranda menüler Atlas'ın yanında, cevap alanı büyük
+        # K-474: tam ekranda soru önizlemesi çözümün solunda büyük durur (çözüm alanı küçülmez); kenardayken eski yerinde (başlığın altında)
+        yan = bool(t and self.resim is not None and not self.resim.isNull())
+        if yan and self.orta.indexOf(self.onizleme) < 0:
+            v.removeWidget(self.onizleme); self.orta.insertWidget(0, self.onizleme, 0, Qt.AlignTop)
+        elif not yan and v.indexOf(self.onizleme) < 0:
+            self.orta.removeWidget(self.onizleme); v.insertWidget(v.indexOf(self.ust_bosluk) + 2, self.onizleme)
         if t and ust.indexOf(self.kontrol) < 0:
             v.removeWidget(self.kontrol); ust.insertWidget(ust.indexOf(self.tam_b), self.kontrol, 4)
             self.kv.removeWidget(self.sec_b); self.sat.addWidget(self.sec_b)   # ferah: iki satır (seçenekler / yaz · Sor · Tahtadan seç)
@@ -13670,8 +13677,9 @@ class AtlasPanel(QFrame):
         if self.resim is not None and not self.resim.isNull():
             # K-474: boş kenarlar kırpılır; tam ekranda soru ekranın genişliğine ve yüksekliğin %40'ına kadar büyür (öğrenci arkadan okuyabilsin)
             kr = atlas_soru_kirp(self.resim); mr = self.main.rect()
-            kutu = (max(900, int(mr.width()*0.92)), max(230, int(mr.height()*0.40))) if t else (420, 150)
+            kutu = (max(420, int(mr.width()*0.42)), max(230, int(mr.height()*0.66))) if t else (420, 150)
             self.onizleme.setPixmap(kr.scaled(kutu[0], kutu[1], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
     def ses_dugme(self):
         if self.ses_proc is not None: self.ses_bitir(); return
         if self.bekleyen or not self.ses_kom: return

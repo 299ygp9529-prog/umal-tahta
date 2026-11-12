@@ -1,5 +1,4 @@
-import sys, os, time, datetime, json, hashlib, hmac, random, base64, faulthandler, threading, http.server, functools
-faulthandler.enable()
+import sys, os, time, datetime, json, hashlib, hmac, random, base64
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
 from PyQt5.QtWidgets import QApplication, QWidget
@@ -22,10 +21,7 @@ for i in range((n + 31)//32): h = h0.copy(); h.update(i.to_bytes(8, 'big')); ks 
 ct = (int.from_bytes(veri, 'big') ^ int.from_bytes(bytes(ks[:n]), 'big')).to_bytes(n, 'big')
 blob = b'UK1' + nonce + hmac.new(K, nonce + ct, hashlib.sha256).digest() + ct
 open('/tmp/plan-sahte.bin', 'wb').write(blob); print('sahte plan %.1f MB' % (len(blob)/1e6))
-class Sessiz(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, *a): pass
-srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8799), functools.partial(Sessiz, directory='/tmp')); threading.Thread(target=srv.serve_forever, daemon=True).start()
-tk.KELEBEK_URLS = ('http://127.0.0.1:8799/plan-sahte.bin',); tk.KELEBEK_FOTO_URLS = ('http://127.0.0.1:8799/yok.bin',)
+tk.KELEBEK_URLS = (); tk.KELEBEK_FOTO_URLS = ()
 w = tk.Window(); w.showFullScreen(); app.processEvents(); w.board_info = lambda: {'sinif': '9-A'}
 sabit = datetime.datetime.combine(datetime.date.today(), datetime.time(10, 0, 5)); w.exam_clock = lambda: sabit
 w.start_messages(); w.start_state_reports() if hasattr(w, 'start_state_reports') else None
@@ -57,18 +53,18 @@ def senaryo():
         if x is not None: x.hide()
     w.new_board(); bekle(1500)
     # kelebek: ilk indirme (çözülür) ve sonraki iki indirme (plan aynı)
-    tk._PHOTOS['data'] = {}; w.kelebek = {}; w.kelebek_new = None; w.kelebek_busy = False; w.kelebek_tick(); bekle(5000); w.take_kelebek()
-    print('plan yüklendi:', len((w.kelebek or {}).get('planlar', [])), 'sınav', '| indirme meşgul', w.kelebek_busy)
+    tk._PHOTOS['data'] = {}; t0 = time.perf_counter(); pl = tk.kelebek_open(blob); t1 = time.perf_counter()
+    print('planı çözmek (her 2 dakikada bir, ekran iş parçacığını tutar): %.0f ms' % ((t1 - t0)*1000))
+    w.kelebek_new = pl; w.take_kelebek(); w._kelebek_oz = hashlib.sha256(blob).hexdigest()
+    print('plan yüklendi:', len((w.kelebek or {}).get('planlar', [])), 'sınav', )
     w.exam_tick(); bekle(500)
     olc('1) boş tahta, sınav haftası', 10000)
-    def indir(): w.kelebek_busy = False; w.kelebek_tick(); QTimer.singleShot(2500, w.take_kelebek)
-    olc('2) 2 dk\'lık kelebek indirmesi', 4000, indir)
-    olc('3) indirme tekrar (plan aynı)', 4000, indir)
     w.open_preview(); bekle(800); es = w.exam_screen
     if es is None: print('sınav yerleri açılmadı'); sys.stdout.flush(); os._exit(0)
-    olc('4) sınav yerleri ekranı açık', 8000)
+    olc('2) sınav yerleri ekranı açık', 8000)
     def yer():
-        sira = sorted(es.seat_rects)[5]; c = es.seat_rects[sira]; es.yerim_sor(QPoint(int(c.center().x()), int(c.center().y()))); app.processEvents()
+        if not es.seat_rects: return
+        sira = sorted(es.seat_rects)[min(5, len(es.seat_rects) - 1)]; c = es.seat_rects[sira]; es.yerim_sor(QPoint(int(c.center().x()), int(c.center().y()))); app.processEvents()
         if not getattr(es, 'yerim_bilgi', None): return
         if hasattr(tk, 'YerimEkran'):
             es.yerim_ac(); bekle(2000)
@@ -78,7 +74,7 @@ def senaryo():
                 d = QApplication.activeModalWidget()
                 if d is not None: d.accept()
             QTimer.singleShot(2000, kapa); es.yerim_ac()
-    olc('5) Yerimi bul aç-kapa + 4 sn', 6000, yer)
+    olc('3) Yerimi bul aç-kapa + 4 sn', 6000, yer)
     w.hide_exam() if hasattr(w, 'hide_exam') else None; bekle(500)
     sys.stdout.flush(); os._exit(0)
 QTimer.singleShot(2500, senaryo); app.exec_()

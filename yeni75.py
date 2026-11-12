@@ -6204,6 +6204,12 @@ class Window(QMainWindow):
         self.close_exam_screen_for_tool(); self.hide_welcome(); self.board.finish()
         if getattr(self, 'rastgele_screen', None) is None: self.rastgele_screen = RastgeleScreen(self)
         self.rastgele_screen.fit(self.rect()); self.rastgele_screen.show(); self.rastgele_screen.raise_()
+    def open_dbs(self):
+        """K-486: Ders Başarı Sınavı yerleşimi (sınıfın kendi öğrencileri; kelebek planına dokunmaz)."""
+        st = exam_now(self.exam_clock(), getattr(self, 'exams', None)) if not self.proje_demo() else None
+        if st and st.get('phase') in ('before', 'during'): self.show_toast('Sınav sırasında açılmaz.'); return
+        if not self.proje_roster(): self.show_toast('Bu sınıf için öğrenci listesi yok.'); return
+        self.board.finish(); DbsEkran(self).exec_(); bellek_topla()
     def open_okul(self):
         self.board.finish(); OkulAraclari(self).exec_()
     def open_anket(self, bolum='anket', canli=False):
@@ -9632,6 +9638,218 @@ class YerimDialog(QDialog):
             p.setPen(QPen(QColor('#e9fdff'), 3*k)); p.drawRoundedRect(c.adjusted(-2*k, -2*k, 2*k, 2*k), 11*k, 11*k)
         p.end()
     def mousePressEvent(self, e): self.accept()
+
+# ---- K-486: Ders Başarı Sınavı (DBS) yerleşimi — sınıfın kendi öğrencileri, o derse özel, fotoğraflı ve rastgele ----
+DBS_ISARET = (('tek', 'Tek otursun'), ('on', 'En öne gelsin'), ('arka', 'Arkada oturmasın'))
+def dbs_yerlestir(ros, desks, isaret, gecmis, rnd, deneme=40):
+    """ros: [(no, ad)]; desks: [(x, y, en, [sıra numaraları])]; isaret: {no: {'tek','on','arka'}}; gecmis: son DBS'de aynı sırada oturan çiftler (frozenset).
+    Dönen: ({no: sıra}, uygulanamayan işaret sayısı). Önce işaretliler yerleşir; aynı çift üst üste yan yana gelmesin diye birkaç deneme içinden en iyisi seçilir."""
+    nolar = [str(r[0]) for r in ros]; isr = {n: set(isaret.get(n) or ()) for n in nolar}
+    tekler = [n for n in nolar if 'tek' in isr[n]]; hak = max(0, sum(len(d[3]) for d in desks) - len(nolar)); temel = 0
+    if len(tekler) > hak:   # boş yerden fazla 'tek otursun': fazlası normal oturur (herkes mutlaka yerleşir)
+        rnd.shuffle(tekler); tekler.sort(key=lambda n: 'on' not in isr[n])
+        for n in tekler[hak:]: isr[n].discard('tek'); temel += 1
+    gerek = len(nolar) + sum(1 for n in nolar if 'tek' in isr[n])
+    ys = sorted({d[1] for d in desks}); kul = []; kap = 0
+    for y in ys:   # önden başlayarak yetecek kadar sıra dizisi (arka boş kalır, sınıf öne toplanır)
+        kul.append(y); kap += sum(len(d[3]) for d in desks if d[1] == y)
+        if kap >= gerek: break
+    on_y = kul[0]; arka_y = set(kul[-2:]) if len(kul) >= 4 else set(kul[-1:]) if len(kul) >= 2 else set()
+    masalar = [d for d in desks if d[1] in kul]
+    en_iyi = None
+    for _ in range(max(1, deneme)):
+        bos = {i: list(d[3]) for i, d in enumerate(masalar)}; yer = {}; sorun = temel
+        def koy(n, uygun, tek=False):
+            ad = [i for i in bos if bos[i] and uygun(masalar[i]) and (not tek or len(bos[i]) == len(masalar[i][3]))]
+            if not ad: return False
+            if tek:   # tekli masa varsa önce o (çiftli masa boşa gitmesin)
+                t1 = [i for i in ad if len(masalar[i][3]) == 1]; ad = t1 or ad
+            i = rnd.choice(ad); s_ = rnd.choice(bos[i]); yer[n] = s_
+            if tek: bos[i] = []
+            else: bos[i].remove(s_)
+            return True
+        gruplar = [[n for n in nolar if 'tek' in isr[n] and 'on' in isr[n]], [n for n in nolar if 'tek' in isr[n] and 'on' not in isr[n]],
+                   [n for n in nolar if 'on' in isr[n] and 'tek' not in isr[n]], [n for n in nolar if 'arka' in isr[n] and not (isr[n] & {'tek', 'on'})],
+                   [n for n in nolar if not isr[n]]]
+        for g in gruplar: rnd.shuffle(g)
+        for n in gruplar[0] + gruplar[1]:
+            on = 'on' in isr[n]; ar = 'arka' in isr[n]
+            kosul = (lambda d: d[1] == on_y) if on else (lambda d: d[1] not in arka_y) if ar else (lambda d: True)
+            if koy(n, kosul, True): continue
+            sorun += 1
+            if not koy(n, lambda d: True, True) and not koy(n, kosul) and not koy(n, lambda d: True): pass
+        for n in gruplar[2]:
+            if koy(n, lambda d: d[1] == on_y): continue
+            sorun += 1
+            for y in kul[1:]:
+                if koy(n, lambda d, y=y: d[1] == y): break
+        for n in gruplar[3]:
+            if not koy(n, lambda d: d[1] not in arka_y): sorun += 1; koy(n, lambda d: True)
+        for n in gruplar[4]: koy(n, lambda d: True)
+        sira_no = {s_: n for n, s_ in yer.items()}; tekrar = 0
+        for d in masalar:
+            o = [sira_no[x] for x in d[3] if x in sira_no]
+            if len(o) == 2 and frozenset(o) in gecmis: tekrar += 1
+        puan = (len(nolar) - len(yer))*100000 + sorun*1000 + tekrar
+        if en_iyi is None or puan < en_iyi[0]: en_iyi = (puan, yer, sorun)
+        if puan == 0: break
+    return en_iyi[1], en_iyi[2]
+
+class DbsIsaret(QDialog):
+    """DBS: bir öğrencinin yer işaretleri (yalnız 'Düzenle' kipinde açılır; tahtada başka zaman görünmez)."""
+    def __init__(self, ust, ad, secili, yok):
+        super().__init__(ust); self.setWindowTitle('Yer ayarı'); self.setMinimumWidth(fit_w(460))
+        self.setStyleSheet('QDialog{background:#0f1c2e;} QLabel{color:white;} QPushButton{font-size:22px;font-weight:700;color:white;background:#13233a;border:2px solid #2a4468;border-radius:14px;padding:12px 18px;text-align:left;}'
+                           'QPushButton:checked{background:#12425a;border-color:#22e8ff;color:#7ff6ff;}')
+        v = QVBoxLayout(self); v.setContentsMargins(24, 20, 24, 20); v.setSpacing(12)
+        t = QLabel(ad); t.setStyleSheet('font-size:26px;font-weight:800;color:#7ff6ff;'); v.addWidget(t); self.d = {}
+        for anahtar, yazi in DBS_ISARET + (('yok', 'Bugün yok (yerleşime girmez)'),):
+            b = QPushButton(yazi); b.setCheckable(True); b.setFocusPolicy(Qt.NoFocus); b.setChecked((anahtar in secili) if anahtar != 'yok' else yok)
+            b.toggled.connect(lambda a, b_=b, y_=yazi: b_.setText(('✓  ' if a else '') + y_)); b.setText(('✓  ' if b.isChecked() else '') + yazi); v.addWidget(b); self.d[anahtar] = b
+        tm = QPushButton('Tamam'); tm.setStyleSheet('text-align:center;background:#22e8ff;color:#06202a;border-color:#22e8ff;'); tm.clicked.connect(self.accept); v.addWidget(tm)
+    def sonuc(self): return {a for a, _ in DBS_ISARET if self.d[a].isChecked()}, self.d['yok'].isChecked()
+
+class DbsEkran(QDialog):
+    """K-486: 'DBS yerleşimi' — sınıfın öğrencileri kelebekteki salon düzenine fotoğraflı, rastgele oturtulur. Yeniden karıştır · Kitapçık (isteğe bağlı A/B) ·
+    Düzenle (öğrenciye: tek otursun / en öne / arkada oturmasın / bugün yok) · Onayla (o ders için sabit; ders bitince kapanır). Salon bir kez çizilip saklanır (zamanlayıcıyla yeniden çizim yok)."""
+    def __init__(self, main):
+        super().__init__(main); self.main = main; self.seat_rects = {}; self.absent = set(); self._on = None
+        self.setAttribute(Qt.WA_DeleteOnClose); self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint); self.setAttribute(Qt.WA_OpaquePaintEvent)
+        try: g = (main.screen() if hasattr(main, 'screen') and main.screen() else QApplication.primaryScreen()).geometry()
+        except Exception: g = main.geometry()
+        self.setGeometry(g); self.setWindowState(Qt.WindowFullScreen)
+        import random; self.rnd = random.Random()
+        self.sinif = main.proje_sinif(); self.ros = [(str(n), a) for n, a in main.proje_roster()]
+        self.anahtar = self.ders_anahtari(); self.yok = set(); self.kitapcik = False; self.duzenle = False; self.onayli = False; self.kirli = False; self.sorun = 0; self.yer = {}
+        self.isaret = {}; self.gecmis = set()
+        try:
+            with open(self.dosya('isaret'), encoding='utf-8') as f: self.isaret = {str(n): set(v) for n, v in json.load(f).items() if v}
+        except (OSError, ValueError, AttributeError, TypeError): pass
+        try:
+            with open(self.dosya('son'), encoding='utf-8') as f: son = json.load(f)
+            self.gecmis = {frozenset(map(str, c)) for c in son.get('ciftler', []) if len(c) == 2}
+            if son.get('anahtar') == list(self.anahtar) and isinstance(son.get('yer'), dict):   # bu derste onaylanmış yerleşim: aynen gelir
+                var = {n for n, _ in self.ros}; self.yer = {str(n): int(s_) for n, s_ in son['yer'].items() if str(n) in var}
+                self.kitapcik = bool(son.get('kitapcik')); self.onayli = True
+        except (OSError, ValueError, AttributeError, TypeError): pass
+        st_ = 'QPushButton{background:#13233a;color:white;border:2px solid #2a4468;border-radius:14px;padding:0 22px;font-size:22px;font-weight:700;}QPushButton:pressed{background:#2a4468;}QPushButton:checked{border-color:#22e8ff;color:#7ff6ff;background:#12425a;}'
+        self.b_duz = QPushButton('Düzenle', self); self.b_kit = QPushButton('Kitapçık A / B', self); self.b_kar = QPushButton('⟳  Yeniden karıştır', self)
+        self.b_on = QPushButton('✓  Onayla', self); self.b_kapat = QPushButton('Kapat', self)
+        for b in (self.b_duz, self.b_kit, self.b_kar, self.b_on, self.b_kapat): b.setFocusPolicy(Qt.NoFocus); b.setStyleSheet(st_)
+        self.b_duz.setCheckable(True); self.b_kit.setCheckable(True); self.b_kit.setChecked(self.kitapcik)
+        self.b_on.setStyleSheet(st_ + 'QPushButton{background:#22e8ff;color:#06202a;border-color:#22e8ff;}')
+        self.b_duz.toggled.connect(self.duzenle_degisti); self.b_kit.toggled.connect(self.kitapcik_degisti); self.b_kar.clicked.connect(self.karistir)
+        self.b_on.clicked.connect(self.onayla); self.b_kapat.clicked.connect(self.accept)
+        if not self.onayli: self.karistir()
+        self.dugmeler()
+        self.t = QTimer(self); self.t.setInterval(30000); self.t.timeout.connect(self.ders_bitti_mi); self.t.start()
+    def ders_anahtari(self):
+        try: lk = self.main.lesson_key()
+        except Exception: lk = None
+        return (lk[0], str(lk[1])) if lk else (time.strftime('%Y-%m-%d'), '-')
+    def ders_bitti_mi(self):
+        if self.onayli and self.ders_anahtari() != self.anahtar: self.accept()   # ders bitti: yerleşim kendiliğinden kalkar
+    def dosya(self, ad): return os.path.join(self.main.data_dir, 'dbs-%s-%s.json' % (ad, ''.join(c for c in self.sinif if c.isalnum() or c in '-_')))
+    def yaz(self, ad, veri):
+        try:
+            with open(self.dosya(ad) + '.tmp', 'w', encoding='utf-8') as f: json.dump(veri, f, ensure_ascii=False)
+            os.replace(self.dosya(ad) + '.tmp', self.dosya(ad))
+        except OSError as e: print('dbs:', e)
+    def duzen(self):
+        gelen = [r for r in self.ros if r[0] not in self.yok]; tek = sum(1 for n, _ in gelen if 'tek' in self.isaret.get(n, ()))
+        return seat_layout(dict(sinif=self.sinif, liste=[dict(sira=i + 1) for i in range(max(1, len(gelen) + tek))]))
+    def karistir(self):
+        lay = self.duzen(); gelen = [r for r in self.ros if r[0] not in self.yok]
+        if not lay: self.yer = {}; return
+        self.yer, self.sorun = dbs_yerlestir(gelen, lay['desks'], self.isaret, self.gecmis, self.rnd); self.kirli = False; self._on = None; self.update()
+    def plan(self):
+        ad = dict(self.ros)
+        return dict(tur='salon', sinif=self.sinif, liste=[dict(sira=s_, no=n, ad=ad.get(n, ''), sinif=self.sinif, ders='') for n, s_ in sorted(self.yer.items(), key=lambda kv: kv[1]) if n in ad and n not in self.yok])
+    def duzenle_degisti(self, acik):
+        self.duzenle = acik
+        if not acik and self.kirli: self.karistir()   # işaretler değişti: yeni kurallarla yeniden yerleşir
+        self._on = None; self.dugmeler(); self.update()
+    def kitapcik_degisti(self, acik): self.kitapcik = acik; self._on = None; self.update()
+    def onayla(self):
+        if self.onayli:   # 'Yeni yerleşim': bu dersin onayı kalkar
+            self.onayli = False; self.karistir(); self.dugmeler(); return
+        lay = self.duzen(); sira_no = {s_: n for n, s_ in self.yer.items()}; ciftler = []
+        for d in (lay or {}).get('desks', []):
+            o = [sira_no[x] for x in d[3] if x in sira_no]
+            if len(o) == 2: ciftler.append(o)
+        self.onayli = True; self.b_duz.setChecked(False)
+        self.yaz('son', dict(anahtar=list(self.anahtar), yer=self.yer, kitapcik=self.kitapcik, ciftler=ciftler)); self.gecmis = {frozenset(c) for c in ciftler}
+        self._on = None; self.dugmeler(); self.update()
+    def dugmeler(self):
+        W, H = self.width(), self.height(); k = min(W/1600, H/900); pay = max(16, int(H*.035)); bh = int(58*k); y = int(H - pay - 9*k - bh); x = W - int(30*k)
+        self.b_on.setText('Yeni yerleşim' if self.onayli else '✓  Onayla'); self.b_kar.setVisible(not self.onayli); self.b_duz.setVisible(not self.onayli)
+        for b in (self.b_kapat, self.b_on, self.b_kar, self.b_kit, self.b_duz):
+            if b.isHidden(): continue
+            f = b.font(); f.setPixelSize(max(12, int(22*k))); b.setFont(f); b.setStyleSheet(b.styleSheet().replace('font-size:22px', 'font-size:%dpx' % max(12, int(22*k))))
+            b.setFixedHeight(bh); b.adjustSize(); x -= b.width(); b.move(x, y); x -= int(12*k)
+        self.sol_sinir = x
+    def resizeEvent(self, e): self._on = None; self.dugmeler()
+    def durum_yazisi(self):
+        n = sum(1 for r in self.ros if r[0] not in self.yok)
+        if self.duzenle: return 'Düzenle: öğrenciye dokunun (tek · öne · arkada değil · bugün yok)'
+        s_ = '%d öğrenci' % n + (' · %d yok' % len(self.yok) if self.yok else '')
+        if self.sorun: s_ += ' · %d yer isteği sığmadı' % self.sorun
+        return s_ + (' · ONAYLANDI' if self.onayli else '')
+    def paintEvent(self, e):
+        from PyQt5.QtGui import QPainter, QFont, QFontMetrics
+        p = QPainter(self); W, H = self.width(), self.height(); k = min(W/1600, H/900)
+        on = self._on
+        if on is None or on[0] != (W, H):
+            fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+            def font(px, b=False): f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setWeight(QFont.Bold if b else QFont.Medium); return f
+            pm = QPixmap(W, H); pm.fill(QColor('#0d1726')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.SmoothPixmapTransform)
+            pay = max(16, int(H*.035)); bar = 76*k
+            try: ders = (lesson_now(self.main.board_info().get('sinif'), self.main.exam_clock()) or {}).get('ders') or ''
+            except Exception: ders = ''
+            pl = self.plan(); lay = self.duzen()
+            try:
+                if pl['liste']: _draw_seatmap(self, q, W, H - bar - pay, k, font, pl, '#5cc8ff', '#5cc8ff', 'Ders Başarı Sınavı' + (' · ' + tr_title(ders) if ders else ''))
+                else: q.setPen(QColor('#9fb3cc')); q.setFont(font(30, True)); q.drawText(QRectF(0, 0, W, H - bar), Qt.AlignCenter, 'Bu sınıf için öğrenci listesi yok.')
+            except Exception as ex: print('dbs çizim:', ex)
+            rects = dict(self.seat_rects); no_sira = {s_: n for n, s_ in self.yer.items()}
+            if self.kitapcik and lay:   # A / B: yan yana ve ön-arka komşular farklı
+                xs = sorted({d[0] for d in lay['desks']}); ys = sorted({d[1] for d in lay['desks']})
+                for x_, y_, w_, ns in lay['desks']:
+                    for j, s_ in enumerate(ns):
+                        c = rects.get(s_)
+                        if c is None: continue
+                        a = (xs.index(x_)*2 + j + ys.index(y_)) % 2 == 0; r_ = QRectF(c.right() - 34*k, c.y() + 4*k, 30*k, 30*k)
+                        q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff' if a else '#ffe14d')); q.drawEllipse(r_); q.setPen(QColor('#06202a')); q.setFont(font(19, True)); q.drawText(r_, Qt.AlignCenter, 'A' if a else 'B')
+            if self.duzenle:   # işaretler yalnız düzenlerken görünür
+                kisa = {'tek': 'TEK', 'on': 'ÖN', 'arka': 'ARKA DEĞİL'}
+                for s_, c in rects.items():
+                    isr = self.isaret.get(no_sira.get(s_), ())
+                    if not isr: continue
+                    yz = ' · '.join(kisa[a] for a, _ in DBS_ISARET if a in isr); f_ = font(13, True); tw = QFontMetrics(f_).horizontalAdvance(yz) + 14*k
+                    r_ = QRectF(c.right() - tw - 4*k, c.bottom() - 26*k, tw, 22*k); q.setPen(Qt.NoPen); q.setBrush(QColor('#22e8ff')); q.drawRoundedRect(r_, 6*k, 6*k)
+                    q.setPen(QColor('#06202a')); q.setFont(f_); q.drawText(r_, Qt.AlignCenter, yz)
+            q.setPen(Qt.NoPen); q.setBrush(QColor(10, 18, 30, 240)); q.drawRect(QRectF(0, H - bar - pay, W, bar + pay))
+            dr = QRectF(30*k, H - bar - pay, max(60, getattr(self, 'sol_sinir', W) - 50*k), bar); yz = self.durum_yazisi(); f_ = font(24, True)
+            while f_.pixelSize() > 11 and QFontMetrics(f_).horizontalAdvance(yz) > dr.width(): f_.setPixelSize(f_.pixelSize() - 1)
+            q.setFont(f_); q.setPen(QColor('#7ff6ff' if not self.sorun or self.duzenle else '#ffc145')); q.drawText(dr, Qt.AlignLeft | Qt.AlignVCenter, yz)
+            q.end(); on = self._on = ((W, H), pm, rects)
+        p.drawPixmap(e.rect(), on[1], e.rect()); p.end()
+    def mousePressEvent(self, e):
+        if not self.duzenle or self.onayli or self._on is None: return
+        no_sira = {s_: n for n, s_ in self.yer.items()}; pos = QPointF(e.pos())
+        for s_, c in self._on[2].items():
+            if c.contains(pos) and s_ in no_sira:
+                n = no_sira[s_]; d = DbsIsaret(self, dict(self.ros).get(n, ''), self.isaret.get(n, set()), n in self.yok)
+                if d.exec_():
+                    isr, yok = d.sonuc()
+                    if isr != self.isaret.get(n, set()) or yok != (n in self.yok): self.kirli = True
+                    if isr: self.isaret[n] = isr
+                    else: self.isaret.pop(n, None)
+                    (self.yok.add if yok else self.yok.discard)(n)
+                    self.yaz('isaret', {a: sorted(v) for a, v in self.isaret.items()})
+                    if yok: self.karistir()   # gelmeyen hemen çıkar (yeri boş kalmasın)
+                    self._on = None; self.update()
+                return
 
 class DenemeDialog(QDialog):
     """Öğretmenler odası: seçilen salon tahtaları birkaç dakikalığına sınav anındaki gibi sınav moduna geçer (tanıtım/deneme).
@@ -14046,7 +14264,8 @@ class OkulAraclari(QDialog):
         items = (('Anket', 'Anket' + ('' if an else '\nAçık anket yok'), an, self.anket),
                  ('Oyunlar', 'Oyunlar\nSatranç · Dama · Tavla · Mangala · XOX', True, self.oyun),
                  ('Okul araçları', 'Rastgele öğrenci\nTahtaya kim kalkacak?', True, self.rastgele),
-                 ('Rehberlik', 'Rehberlik\nProje tercihi' + (' · Bilgi formu' if rh else ''), pj, self.rehberlik))   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
+                 ('Rehberlik', 'Rehberlik\nProje tercihi' + (' · Bilgi formu' if rh else ''), pj, self.rehberlik),
+                 ('Okul araçları', 'DBS yerleşimi\nDers Başarı Sınavı: fotoğraflı rastgele oturma', True, self.dbs))   # K-486   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
         for i, (ic, txt, on, fn) in enumerate(items):
             b = QPushButton('  ' + txt); b.setFocusPolicy(Qt.NoFocus); b.setMinimumSize(340, 110)
             b.setIcon(QIcon(ATLAS_PNG) if ic == 'Atlas' else tool_icon(ic)); b.setIconSize(QSize(56, 56)); b.setEnabled(on)
@@ -14060,6 +14279,7 @@ class OkulAraclari(QDialog):
     def oyun(self): self.accept(); QTimer.singleShot(0, self.main.open_games)
     def proje(self): self.accept(); QTimer.singleShot(0, self.main.open_proje)
     def rastgele(self): self.accept(); QTimer.singleShot(0, self.main.open_rastgele)
+    def dbs(self): self.accept(); QTimer.singleShot(0, self.main.open_dbs)
     def atlas(self): self.accept(); QTimer.singleShot(0, lambda: self.main.atlas_sor_ac())
 
 class RehberlikMenu(QDialog):

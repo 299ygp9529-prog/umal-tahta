@@ -12942,7 +12942,8 @@ class YeniPanel(QWidget):
     def sayfa_okul(self):
         m = self.m; s = QWidget(); l = QVBoxLayout(s); l.setContentsMargins(0, 0, 0, 0); l.setSpacing(8)
         og = [self.tile('Oyunlar', 'Oyunlar', m.open_games), self.tile('Anket', 'Anket', m.open_anket), self.tile('Rastgele öğrenci', 'Okul araçları', m.open_rastgele, kisa='Rastgele'),
-              self.tile('Rehberlik', 'Rehberlik', lambda: RehberlikMenu(m).exec_()), self.tile('Sınav yerleri', 'Sayaç', m.open_preview, kisa='Sınav')]
+              self.tile('Rehberlik', 'Rehberlik', lambda: RehberlikMenu(m).exec_()), self.tile('Sınav yerleri', 'Sayaç', m.open_preview, kisa='Sınav'),
+              self.tile('DBS yerleşimi (Ders Başarı Sınavı)', 'Okul araçları', m.open_dbs, kisa='DBS')]   # K-488: PDF / tahta kipinde Okul sekmesinden
         self.t_kontrol = self.tile('Tahta Kontrol (web panel)', 'Ayarlar', self.kontrol_ac, kisa='Kontrol'); og.append(self.t_kontrol)   # K-377: Öğretmenler odasında
         l.addWidget(self.izgara(og)); l.addStretch(1); return s
     def kontrol_ac(self):

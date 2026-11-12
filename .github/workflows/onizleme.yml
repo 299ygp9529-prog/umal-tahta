@@ -42,9 +42,15 @@ jobs:
           mkdir -p /tmp/onizleme
           export LANG=tr_TR.UTF-8 LC_ALL=tr_TR.UTF-8 TZ=Europe/Istanbul QT_X11_NO_MITSHM=1 PYTHONPATH=/usr/lib/umal-tahta/python
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
-          : > /tmp/olcum.txt
-          cp eski95.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; echo "== eski95" >> /tmp/olcum.txt; DISPLAY=:7 timeout 120 python3 -u yerim_olc_t.py > /tmp/c.txt 2>&1 || echo "HATA" >> /tmp/olcum.txt; (grep -v XDG /tmp/c.txt || true) | grep "açılışı\|boşta\|) dokunuş" >> /tmp/olcum.txt
-          cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__; echo "== yeni" >> /tmp/olcum.txt; DISPLAY=:7 timeout 120 python3 -u yerim2_t.py > /tmp/c.txt 2>&1 || echo "HATA" >> /tmp/olcum.txt; (grep -v XDG /tmp/c.txt || true) | grep "açılışı\|boşta\|) dokunuş" >> /tmp/olcum.txt
+          : > /tmp/olcum.txt; rm -f /tmp/onizleme/*.png
+          cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
+          for s in "Öğretmenler odası" "9-A"; do
+            rm -rf /root/.local/share/umal-tahta; mkdir -p /root/.local/share/umal-tahta; printf '{"sinif": "%s"}' "$s" > /root/.local/share/umal-tahta/tahta.json
+            DISPLAY=:7 timeout 90 python3 -u /usr/share/tahta-kalem/tahta_kalem.py > /tmp/a.txt 2>&1; k=$?
+            echo "== $s: çıkış kodu $k (124 = 90 sn boyunca açık kaldı)" >> /tmp/olcum.txt
+            (grep -n "Traceback\|Error\|error\|hata\|Segmentation\|Abort" /tmp/a.txt || true) | grep -v "XDG\|libEGL\|MESA\|dri" | head -15 >> /tmp/olcum.txt
+            ls /root/.local/share/umal-tahta/ >> /tmp/olcum.txt; (cat /root/.local/share/umal-tahta/hata-kaydi.txt 2>/dev/null || true) | tail -20 >> /tmp/olcum.txt
+          done
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

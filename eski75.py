@@ -944,6 +944,7 @@ def legacy_card(clip):
     clip = fitz.Rect(clip); h = min(300, GUNUN_CARD*clip.height/max(clip.width, 1))
     s = min(GUNUN_CARD/max(clip.width, 1), h/max(clip.height, 1)); w = clip.width*s; x0 = 48 + (GUNUN_CARD - w)/2
     return [x0, 36, x0 + w, 36 + clip.height*s]
+SOLUTION_CARD_SHARE_SOL = .92   # K-476: sola yaslanan uzun soruda kartın ekran yüksekliğindeki payı
 SOLUTION_CARD_SHARE = .62   # soru kartı ekranın en çok bu kadarını kaplar; kalanı çözüm için boş kalır
 def fit_card(clip, vw, vh):
     """Çözüm alanı: tahta genişliğe sığar, soru olabildiğince büyük; kart ekran yüksekliğinin
@@ -951,7 +952,13 @@ def fit_card(clip, vw, vh):
     clip = fitz.Rect(clip); zoom = max(.5, (vw - 8)/960); seen = (vh - 8)/zoom
     hmax = max(120, seen*SOLUTION_CARD_SHARE - 52)   # kart çerçevesi: üstte 36, altta 16 birim
     w = GUNUN_CARD; h = w*clip.height/max(clip.width, 1)
-    if h > hmax: h = hmax; w = h*clip.width/max(clip.height, 1)
+    if h > hmax:
+        h = hmax; w = h*clip.width/max(clip.height, 1)
+        # K-476: uzun (dikey) soru: kart sola yaslanır, ekran yüksekliğinin %92'sine kadar büyür (arka sıralar okuyabilsin);
+        # çözüm alanı sağda ve altta kalır. Kart genişliği sayfanın en çok %56'sı.
+        oran = clip.height/max(clip.width, 1); hs = max(120, seen*SOLUTION_CARD_SHARE_SOL - 52); ws = hs/max(oran, 1e-6)
+        if ws > 960*.56 - 64: ws = 960*.56 - 64; hs = ws*oran
+        if ws > w*1.12: return [40, 36, 40 + ws, 36 + hs], zoom
     x0 = 480 - w/2
     return [x0, 36, x0 + w, 36 + h], zoom
 def question_card(src, page_no, page_marks, clip, ink=None, card=None):
@@ -3800,6 +3807,10 @@ class Window(QMainWindow):
         if ks is not None: ks.setVisible(not getattr(self,'_exam_full',False) and getattr(self,'yeni_panel',None) is not None and not self.yeni_panel.isVisible()); ks.yerlestir()
         for o in (getattr(self,'spot',None),getattr(self,'curtain',None),getattr(self,'exam_screen',None)):
             if o is not None: o.fit(vp); o.raise_()
+        sb=getattr(self,'soru_buyut_b',None)
+        if sb is not None:
+            g_=getattr(self,'solution_origin',None) is not None
+            if sb.isVisibleTo(self.nav)!=g_: sb.setVisible(g_)
         self.nav.adjustSize();self.nav.move(vp.x()+10,vp.bottom()-self.nav.height()-10);self.nav.raise_()   # lower left
         fb=getattr(self,'float_bell',None)
         if fb is not None:fb.place();fb.raise_()
@@ -3922,7 +3933,14 @@ class Window(QMainWindow):
         if not text:return
         self.toast.setText(text);self.toast.show();self.place_overlays();self.toast_timer.start(4000)
     def eventFilter(self,obj,e):
-        if obj is getattr(self,'scroll',None) and e.type() in (QEvent.Resize,QEvent.Show):self.place_overlays()
+        if obj is getattr(self,'scroll',None) and e.type() in (QEvent.Resize,QEvent.Show):
+            self.place_overlays()
+            # K-477: bu an görünen alan henüz eski boyunda olabilir (olay, alan yeniden boyutlanmadan önce gelir): alt çubuk ve düğmeler
+            # eski yerinde kalıyordu (tam ekrana geçince ekranın ortasında). Boyut oturunca bir kez daha yerleştirilir.
+            t=getattr(self,'_yer_t',None)
+            if t is None:
+                t=self._yer_t=QTimer(self);t.setSingleShot(True);t.timeout.connect(self.place_overlays)
+            t.start(80)
         return super().eventFilter(obj,e)
     def open_shapes(self):
         self.refresh_colors()   # a tap must not change the button's own state
@@ -4215,6 +4233,7 @@ class Window(QMainWindow):
         self.button(bottom,'Sayfaya git',self.go_to_page)
         zo=self.button(bottom,'−',lambda:self.set_zoom(self.zoom/1.2))
         self.button(bottom,'Sığdır',self.fit_page)
+        self.soru_buyut_b=QPushButton('⤢ Soruyu büyüt');self.soru_buyut_b.setFocusPolicy(Qt.NoFocus);self.soru_buyut_b.clicked.connect(self.soru_buyut);bottom.addWidget(self.soru_buyut_b);self.soru_buyut_b.hide()   # K-476: yalnız çözüm alanında
         zi=self.button(bottom,'+',lambda:self.set_zoom(self.zoom*1.2))
         for b_,c_,n_ in ((zo,0xe32a,'Küçült'),(zi,0xe3d4,'Büyüt')):
             g_,css_=glyph_style(c_,18);b_.setText(g_);b_.setStyleSheet('QPushButton{%s}'%css_);b_.setToolTip(n_);b_.setAccessibleName(n_)
@@ -4355,6 +4374,7 @@ class Window(QMainWindow):
             page.insert_image(cr,stream=png,keep_proportion=True)
             doc.set_metadata({'title':'Soru ve çözüm — '+APP_NAME,'keywords':'UMAL-solution'})
             self.replace(doc,persist=False);self.solution_origin=origin
+            self.soru_buyut_b.show();QTimer.singleShot(50,self.place_overlays)   # K-476
             self.tabs_changed();self.filename.setText('Soru kartı · Altındaki alana çözümünüzü yazın')
             self.set_tool('pen');self.color=PEN_DEFAULT;self.dirty=True
             if key in origin['solutions']:
@@ -4582,7 +4602,7 @@ class Window(QMainWindow):
         self.marks=origin['marks'];self.page=origin['page'];self.dirty=origin['dirty'] or changed
         self.solutions=solutions
         if changed:self.setWindowTitle(PRODUCT+' • Kaydedilmemiş değişiklikler')
-        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.set_tool('pen');self.set_zoom(origin['zoom'])
+        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.soru_buyut_b.hide();self._soru_buyuk=False;self.set_tool('pen');self.set_zoom(origin['zoom'])
         if base:self.session_pdf_name=origin['pdf'];self.session_pdf_pending=False
         else:self.session_pdf_pending=True
         self.save_session()
@@ -4985,7 +5005,7 @@ class Window(QMainWindow):
         self.history_ctx = None
         self.session_timer.stop()
         self.board.clear_selection()
-        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed()
+        self.solution_origin=None;self.return_pdf.hide();self.tabs_changed();self.soru_buyut_b.hide();self._soru_buyuk=False
         old = self.doc
         sil_ = []; marks = recover_marks(doc, sil_) if tara else {}   # K-438: sekme geri açılırken yazılar durum.json'dan gelir; belge taranmaz
         # K-438: belge diskteki dosyanın aynısıysa (hiçbir şey çıkarılmadı) oturum kopyası arka planda düz dosya kopyasıdır (baştan yazılmaz)
@@ -6799,6 +6819,24 @@ class Window(QMainWindow):
         # Çözüm alanı genişliğe sığar (soru kartı make_solution'da buna göre boyutlanır), en üstten başlar.
         self.set_zoom(getattr(self,'solution_fit',None) or 2.0)
         self.scroll.horizontalScrollBar().setValue(0);self.scroll.verticalScrollBar().setValue(0)
+        self._soru_buyuk=False
+        try: self.soru_buyut_b.setText('⤢ Soruyu büyüt')
+        except Exception: pass
+    def soru_buyut(self):
+        """K-476: çözüm alanında soru kartı tek dokunuşla bütün ekranı kaplar (öğrenciler okusun); yeniden dokununca çözüm düzenine döner.
+        Yalnız yakınlaştırma ve kaydırma değişir; yazılanlar yerinde kalır."""
+        o=getattr(self,'solution_origin',None)
+        if not o or not o.get('card'): return
+        if getattr(self,'_soru_buyuk',False): self.solution_zoom(); return
+        try:
+            cr=fitz.Rect(o['card']);pay=14;vp=self.scroll.viewport();vw=vp.width()-8;vh=vp.height()-8
+            q=self.board.scale/max(self.zoom,1e-6)
+            self.set_zoom(min(vw/((cr.width+2*pay)*q),vh/((cr.height+2*pay)*q),8))
+            k=self.board.scale
+            self.scroll.horizontalScrollBar().setValue(int((cr.x0-pay)*k-(vp.width()-(cr.width+2*pay)*k)/2))
+            self.scroll.verticalScrollBar().setValue(int((cr.y0-pay)*k-(vp.height()-(cr.height+2*pay)*k)/2))
+            self._soru_buyuk=True;self.soru_buyut_b.setText('⤡ Çözüme dön')
+        except Exception as e: print('soru büyüt:',e)
     def go_to_page(self):
         target=page_number_dialog(self,len(self.doc),self.page+1)
         if target: self.goto(target-1-self.page)
@@ -12846,8 +12884,7 @@ class AtlasYuzen(QWidget):
                 elif t_: ozet.append(t_)
             self.grafik = [f for f in (d.get('grafik') or [])[:2] if isinstance(f, str) and graph_compile(f)[0]]
             import re as _re
-            oz = latex_duz(' '.join(ozet)); c_ = _re.search(r'^(.{20,170}?[.!?])(\s|$)', oz)   # yapay zekâ çözmeye başlarsa yalnız ilk cümle
-            oz = c_.group(1) if c_ else (oz[:170] + '…' if len(oz) > 170 else oz)
+            oz = atlas_ilk_cumle(' '.join(ozet))   # K-478: yapay zekâ çözmeye başlarsa yalnız ilk cümle; formüller bozulmadan (kesir üst üste, taban altta) çizilir
             sec = [latex_duz(x) for x in sec if 2 <= len(x) <= 34 and len(x.split()) <= 5][:4]
             if not sec: sec = ['Soruyu çöz', 'Adım adım anlat', 'Çözümü kontrol et'] + (['Grafiğini çiz'] if self.grafik else [])
             self.balon_goster(oz or 'Ne yapayım?', sec + ['Başka bir şey sor…']); self.maskot.ifade('konusma')
@@ -12869,15 +12906,28 @@ class AtlasYuzen(QWidget):
             bal.zaman = QTimer(bal); bal.zaman.setSingleShot(True); bal.zaman.timeout.connect(self.balon_kapat)
         for b_ in bal.dug: bal.izgara.removeWidget(b_); b_.hide(); b_.setParent(None); b_.deleteLater()
         bal.dug = []
-        bal.yazi.setText('<b style="color:#7ff6ff">Atlas:</b> ' + metin.replace('&', '&amp;').replace('<', '&lt;'))
+        vp = m.scroll.viewport().geometry(); W_ = min(640, vp.width() - 40)
+        try:   # K-478: yazı, cevap panelindeki formül çizicisiyle (kesirler üst üste, alt/üst simgeler yerinde); düz yazıya çevrilince karakterler bozuluyordu
+            im_ = atlas_cevap_resmi('Atlas: ' + metin, W_ - 32 - 70, 22, '#eef6ff', True)
+            bal.yazi.setText(''); bal.yazi.setPixmap(QPixmap.fromImage(im_)); yazi_h = im_.height()
+        except Exception as e:
+            print('balon yazı:', e); bal.yazi.setPixmap(QPixmap()); yazi_h = None
+            bal.yazi.setText('<b style="color:#7ff6ff">Atlas:</b> ' + latex_duz(metin).replace('&', '&amp;').replace('<', '&lt;'))
         for i, t_ in enumerate(secenekler):
             b_ = QPushButton(t_); b_.setFocusPolicy(Qt.NoFocus)
             if i == 0 and t_ != 'Başka bir şey sor…': b_.setObjectName('ilk')
             b_.setMinimumHeight(48); b_.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b_.clicked.connect(lambda c=False, t__=t_: self.secildi(t__)); bal.izgara.addWidget(b_, i//2, i % 2); bal.dug.append(b_)
-        vp = m.scroll.viewport().geometry(); W_ = min(640, vp.width() - 40); bal.setFixedWidth(W_)
-        sat_ = (len(secenekler) + 1)//2; yh = max(30, bal.yazi.heightForWidth(W_ - 32 - 70) + 14); bal.setFixedHeight(12 + max(yh, 40) + (10 + sat_*48 + (sat_ - 1)*8 if sat_ else 0) + 14)
-        x = max(vp.x() + 8, self.x() - bal.width() - 14); y = max(vp.y() + 8, min(self.y() + self.height() - bal.height(), vp.bottom() - bal.height() - 8))
+        bal.setFixedWidth(W_)
+        sat_ = (len(secenekler) + 1)//2; yh = max(30, (yazi_h if yazi_h is not None else bal.yazi.heightForWidth(W_ - 32 - 70)) + 14); bal.setFixedHeight(12 + max(yh, 40) + (10 + sat_*48 + (sat_ - 1)*8 if sat_ else 0) + 14)
+        # K-478: balon maskotun üstüne binmez: önce solu, sığmazsa sağı, o da olmazsa üstü ya da altı
+        bw, bh = bal.width(), bal.height(); sik = lambda v, a, b: max(a, min(v, b))
+        yy = sik(self.y() + self.height() - bh, vp.y() + 8, max(vp.y() + 8, vp.bottom() - bh - 8))
+        if self.x() - bw - 14 >= vp.x() + 8: x, y = self.x() - bw - 14, yy
+        elif self.x() + self.width() + 14 + bw <= vp.right() - 8: x, y = self.x() + self.width() + 14, yy
+        else:
+            x = sik(self.x() + self.width()//2 - bw//2, vp.x() + 8, max(vp.x() + 8, vp.right() - bw - 8))
+            y = self.y() - bh - 10 if self.y() - bh - 10 >= vp.y() + 8 else min(self.y() + self.height() + 10, max(vp.y() + 8, vp.bottom() - bh - 8))
         bal.move(x, y); bal.show(); bal.raise_(); self.raise_()
         if secenekler: bal.zaman.start(30000)   # dokunulmazsa kendiliğinden kapanır
     def balon_kapat(self):
@@ -12891,6 +12941,15 @@ class AtlasYuzen(QWidget):
             m.atlas_panel.grafik = list(self.grafik); m.atlas_panel.grafik_ciz(); return
         m.atlas_sor_ac(pix); pn = m.atlas_panel
         if t != 'Başka bir şey sor…': QTimer.singleShot(0, lambda: pn.sor(t))
+
+def atlas_ilk_cumle(t, en_az=20, en_cok=200):
+    """K-478: özetin ilk cümlesi, LaTeX'e dokunmadan: '2.' gibi sıra sayısında ya da $…$ içindeki noktada kesilmez."""
+    t = ' '.join((t or '').split()); dolar = 0
+    for i, ch in enumerate(t):
+        if ch == '$': dolar += 1
+        elif ch in '.!?' and i >= en_az and dolar % 2 == 0 and not t[i-1].isdigit() and (i + 1 == len(t) or t[i+1] == ' '): return t[:i+1]
+        if i >= en_cok and dolar % 2 == 0 and ch == ' ': return t[:i] + '…'
+    return t
 
 def latex_duz(t):
     """Balon için LaTeX'i okunur düz yazıya çevirir ($x^{2}$ → x², \\frac{a}{b} → a/b)."""

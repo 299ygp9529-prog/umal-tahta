@@ -44,11 +44,11 @@ jobs:
           Xvfb :7 -screen 0 1920x1080x24 -nolisten tcp >/dev/null 2>&1 & sleep 2; DISPLAY=:7 openbox >/dev/null 2>&1 & sleep 1
           : > /tmp/olcum.txt
           cp eski75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-          echo ESKI >> /tmp/olcum.txt; DISPLAY=:7 timeout 60 python3 cozum_t.py 2>&1 | grep -v XDG | grep "UZUN\|GEN" >> /tmp/olcum.txt || true
-          rm -rf /root/.local/share/umal-tahta/oturum* /root/.local/share/umal-tahta/sekmeler* 2>/dev/null || true
+          echo "ESKI (Pro 88)" >> /tmp/olcum.txt; DISPLAY=:7 timeout 60 python3 sig_t.py 2>&1 | grep -v XDG | tail -8 >> /tmp/olcum.txt || echo "hata" >> /tmp/olcum.txt
+          mkdir -p /tmp/eski && mv /tmp/onizleme/sig-2-cozum.png /tmp/onizleme/sig-eski.png || true
           cp yeni75.py /usr/share/tahta-kalem/tahta_kalem.py; rm -rf /usr/share/tahta-kalem/__pycache__
-          echo YENI >> /tmp/olcum.txt; DISPLAY=:7 timeout 120 python3 cozum_t.py 2>&1 | grep -v XDG | tail -12 >> /tmp/olcum.txt || echo "hata" >> /tmp/olcum.txt
-          DISPLAY=:7 timeout 60 python3 balon_t.py 2>&1 | grep -v XDG | tail -8 >> /tmp/olcum.txt || echo "hata balon" >> /tmp/olcum.txt
+          echo "YENI" >> /tmp/olcum.txt; DISPLAY=:7 timeout 60 python3 sig_t.py 2>&1 | grep -v XDG | tail -8 >> /tmp/olcum.txt || echo "hata" >> /tmp/olcum.txt
+          DISPLAY=:7 timeout 60 python3 atlas_t.py 2>&1 | grep -v XDG | tail -6 >> /tmp/olcum.txt || echo "hata atlas" >> /tmp/olcum.txt
           cat /tmp/olcum.txt
       - name: Durumu yaz
         run: |

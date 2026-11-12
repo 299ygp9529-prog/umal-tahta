@@ -4233,7 +4233,7 @@ class Window(QMainWindow):
         self.button(bottom,'Sayfaya git',self.go_to_page)
         zo=self.button(bottom,'−',lambda:self.set_zoom(self.zoom/1.2))
         self.button(bottom,'Sığdır',self.fit_page)
-        self.soru_buyut_b=QPushButton('🔍 Soruyu büyüt');self.soru_buyut_b.setFocusPolicy(Qt.NoFocus);self.soru_buyut_b.clicked.connect(self.soru_buyut);bottom.addWidget(self.soru_buyut_b);self.soru_buyut_b.hide()   # K-476: yalnız çözüm alanında
+        self.soru_buyut_b=QPushButton('⤢ Soruyu büyüt');self.soru_buyut_b.setFocusPolicy(Qt.NoFocus);self.soru_buyut_b.clicked.connect(self.soru_buyut);bottom.addWidget(self.soru_buyut_b);self.soru_buyut_b.hide()   # K-476: yalnız çözüm alanında
         zi=self.button(bottom,'+',lambda:self.set_zoom(self.zoom*1.2))
         for b_,c_,n_ in ((zo,0xe32a,'Küçült'),(zi,0xe3d4,'Büyüt')):
             g_,css_=glyph_style(c_,18);b_.setText(g_);b_.setStyleSheet('QPushButton{%s}'%css_);b_.setToolTip(n_);b_.setAccessibleName(n_)
@@ -6237,17 +6237,22 @@ class Window(QMainWindow):
     def atlas_soruyu_sigdir(self):
         """K-474: Atlas paneli kenardayken çerçeveye alınan soru, tahtanın kalan alanına sığacak kadar büyütülür ve ortalanır."""
         try:
-            c = getattr(self, 'atlas_son_cerceve', None); pn = getattr(self, 'atlas_panel', None)
-            if not c or c[0] != self.page or pn is None or not pn.isVisible() or pn.tam or pn.resim is None: return
+            pn = getattr(self, 'atlas_panel', None); c = getattr(pn, 'hedef', None)   # K-479: yalnız bu sorunun kendi bölgesi (eski bir çerçeve değil)
+            if not c or c[0] != id(self.doc) or c[1] != self.page or pn is None or not pn.isVisible() or pn.tam or pn.resim is None: return
             if getattr(self.board, 'active', None) is not None: return   # yazarken dokunma
-            r = c[1]; vp = self.scroll.viewport(); vw = vp.width() - 28; vh = vp.height() - 28
+            r = c[2]; vp = self.scroll.viewport(); gen = vp.width()
+            try:   # K-479: panel görünür alanın üstüne biniyorsa yalnız açıkta kalan genişlik sayılır
+                px = vp.mapFromGlobal(pn.mapToGlobal(QPoint(0, 0))).x()
+                if 120 < px < gen: gen = px
+            except Exception: pass
+            vw = gen - 28; vh = vp.height() - 28
             if vw < 120 or vh < 120 or r.width() < 4 or r.height() < 4: return
             q = self.board.scale/max(self.zoom, 1e-6)
             if getattr(self, '_atlas_onceki', None) is None:
                 self._atlas_onceki = (self.page, self.zoom, self.scroll.horizontalScrollBar().value(), self.scroll.verticalScrollBar().value())
             self.set_zoom(min(vw/(r.width()*q), vh/(r.height()*q), 6.0))
             k = self.board.scale
-            self.scroll.horizontalScrollBar().setValue(int(r.x()*k - (vp.width() - r.width()*k)/2))
+            self.scroll.horizontalScrollBar().setValue(int(r.x()*k - (gen - r.width()*k)/2))
             self.scroll.verticalScrollBar().setValue(int(r.y()*k - (vp.height() - r.height()*k)/2))
         except Exception as e: print('atlas sığdır:', e)
     def atlas_gorunumu_geri(self):
@@ -6265,6 +6270,7 @@ class Window(QMainWindow):
         r = QRectF(QPointF(*pts[0]), QPointF(*pts[1])).normalized()
         if min(r.width(), r.height())*self.board.scale < 16: geri(); return
         self.atlas_son_cerceve = (self.page, QRectF(r))   # Tahtaya yaz: cevap bu sorunun altına yazılır
+        self.atlas_sigdir_hedef = (id(self.doc), self.page, QRectF(r))   # K-479: panel açılınca kalan alana sığdırılacak bölge
         self.atlas_sor_secim(r, True)
     def atlas_sor_secim(self, r, otomatik=False):
         """Seçilen bölümün görüntüsü (çerçeve olmadan) Atlas'a gider; otomatik: dersin ilk seçeneğiyle (Çöz…) hemen sorulur."""
@@ -6820,7 +6826,7 @@ class Window(QMainWindow):
         self.set_zoom(getattr(self,'solution_fit',None) or 2.0)
         self.scroll.horizontalScrollBar().setValue(0);self.scroll.verticalScrollBar().setValue(0)
         self._soru_buyuk=False
-        try: self.soru_buyut_b.setText('🔍 Soruyu büyüt')
+        try: self.soru_buyut_b.setText('⤢ Soruyu büyüt')
         except Exception: pass
     def soru_buyut(self):
         """K-476: çözüm alanında soru kartı tek dokunuşla bütün ekranı kaplar (öğrenciler okusun); yeniden dokununca çözüm düzenine döner.
@@ -6835,7 +6841,7 @@ class Window(QMainWindow):
             k=self.board.scale
             self.scroll.horizontalScrollBar().setValue(int((cr.x0-pay)*k-(vp.width()-(cr.width+2*pay)*k)/2))
             self.scroll.verticalScrollBar().setValue(int((cr.y0-pay)*k-(vp.height()-(cr.height+2*pay)*k)/2))
-            self._soru_buyuk=True;self.soru_buyut_b.setText('↩ Çözüme dön')
+            self._soru_buyuk=True;self.soru_buyut_b.setText('⤡ Çözüme dön')
         except Exception as e: print('soru büyüt:',e)
     def go_to_page(self):
         target=page_number_dialog(self,len(self.doc),self.page+1)
@@ -12818,6 +12824,13 @@ class AtlasYuzen(QWidget):
         # K-368: ekranda görünen her şey (PDF'teki sorular + öğretmenin yazdıkları) Atlas'a gider
         q = b.visibleRegion().boundingRect().adjusted(4, 4, -4, -4) & b.rect()
         if q.width() < 16 or q.height() < 16: m.atlas_dugme(); return
+        # K-479: panel açılınca ekranda o an görünen bölüm (çözüm alanında soru kartı) kalan alana sığdırılır; hiçbir şey panelin altında kalmaz
+        try:
+            o_ = getattr(m, 'solution_origin', None)
+            if o_ and o_.get('card') and ((m.doc.metadata or {}).get('keywords') or '') == 'UMAL-solution':
+                c_ = o_['card']; self._hedef = (id(m.doc), m.page, QRectF(c_[0] - 10, c_[1] - 10, c_[2] - c_[0] + 20, c_[3] - c_[1] + 20))
+            else: self._hedef = (id(m.doc), m.page, QRectF(q.x()/k, q.y()/k, q.width()/k, q.height()/k))
+        except Exception: self._hedef = None
         b._temiz_cek = True
         try: self.pix = b.grab(q)
         finally: b._temiz_cek = False
@@ -12939,6 +12952,7 @@ class AtlasYuzen(QWidget):
         if t != 'Başka bir şey sor…' and 'rafi' in t and self.grafik:   # grafik: Atlas'ın okuduğu fonksiyonlar Grafik çizicide (soru harcamaz)
             if getattr(m, 'atlas_panel', None) is None: m.atlas_panel = AtlasPanel(m)
             m.atlas_panel.grafik = list(self.grafik); m.atlas_panel.grafik_ciz(); return
+        m.atlas_sigdir_hedef = getattr(self, '_hedef', None)   # K-479
         m.atlas_sor_ac(pix); pn = m.atlas_panel
         if t != 'Başka bir şey sor…': QTimer.singleShot(0, lambda: pn.sor(t))
 
@@ -13677,6 +13691,7 @@ class AtlasPanel(QFrame):
         return (d.get('ders') or '') if d.get('durum') == 'ders' else ''
     def ac(self, resim=None):
         self.resim = resim; ders = self.ders_bilgisi(); self.brans = ders_bransi(ders)
+        self.hedef = getattr(self.main, 'atlas_sigdir_hedef', None) if (resim is not None and not resim.isNull()) else None; self.main.atlas_sigdir_hedef = None   # K-479
         self.ders.setText((ders or 'Ders dışı') + (' · ' + self.brans if self.brans and self.brans not in ders else ''))
         for b in self.secenek_dug: b.deleteLater()
         self.secenek_dug = []

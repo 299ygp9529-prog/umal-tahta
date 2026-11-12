@@ -6,7 +6,7 @@ from PyQt5.QtCore import QTimer
 app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
 try: os.remove(os.path.expanduser('~/.local/share/umal-tahta/kelebek-duyuru.json'))
 except OSError: pass
-w = tk.Window(); w.showFullScreen(); app.processEvents()
+w = tk.Window(); w.showFullScreen(); app.processEvents(); w.board_info = lambda: {'sinif': '9-A'}
 yarin = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
 def a1():
     for nm in ('welcome', 'intro'):

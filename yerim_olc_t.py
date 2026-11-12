@@ -50,5 +50,5 @@ def a1():
         ilk = olc['yd'][0] if olc['yd'] else (t2, -1); arada = olc['es'][n1:]; n2 = len(olc['es']); bekle(1500); son = olc['es'][n2:]
         print('%d) dokunuş (Yerimi bul çıkar) %.0f ms | salon açılışı: ilk çizime kadar %.0f ms (çizim %.0f ms) | pencere açıkken sınav ekranı %d kez boyandı (toplam %.0f ms) | kapanış %.0f ms | dönüşte 1,5 sn: %d boyama, en çok %.0f ms, toplam %.0f ms'
               % (tur + 1, (t1 - t0)*1000, (ilk[0] - t2)*1000, ilk[1], len(arada), sum(d for _, d in arada), (t3 - kapat[0])*1000, len(son), max([d for _, d in son] or [0]), sum(d for _, d in son)))
-    print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
+    import subprocess; subprocess.run(['import', '-window', 'root', '/tmp/onizleme/sinav-yerleri.png']); print('açılmış fotoğraf', len(tk._PHOTOS['pix'])); app.quit()
 QTimer.singleShot(2500, a1); app.exec_()

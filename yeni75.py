@@ -8390,6 +8390,7 @@ class ExamScreen(QWidget):
     def __init__(self, main):
         super().__init__(main.scroll); self.main = main; self.st = None; self.grade = None
         self.setAttribute(Qt.WA_StyledBackground, False)
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)   # K-493: ekranın tamamını kendi boyar; altındaki tahta sayfası boşuna yeniden çizilmez
         self.hide_btn = QPushButton('Gizle', self); self.hide_btn.setFocusPolicy(Qt.NoFocus); self.hide_btn.setMinimumHeight(46)
         self.hide_btn.setStyleSheet('QPushButton{background:rgba(255,255,255,0.10);color:#c9d6ea;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:0 18px;font-size:17px;}')
         self.hide_btn.clicked.connect(main.hide_exam)
@@ -8625,7 +8626,8 @@ class ExamScreen(QWidget):
         p.restore()
     def paintEvent(self, e):
         st = self.st
-        if not st: return
+        if not st:
+            p = QPainter(self); p.fillRect(self.rect(), QColor('#0f1c2e')); p.end(); return   # K-493: opak ekran her zaman zeminini boyar
         from PyQt5.QtGui import QFont
         import datetime
         fams = ui_fonts(); fam = fams.get('Poppins-Medium') or fams.get('Poppins-Regular') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
@@ -8901,6 +8903,7 @@ class KarargahScreen(QWidget):
     def __init__(self, main):
         super().__init__(main); self.main = main; self.ex = None; self.detail = None; self.manual = False; self.tiles = {}
         self.absent = set(); self.seat_rects = {}
+        self.setAttribute(Qt.WA_OpaquePaintEvent, True)   # K-493: tamamını kendi boyar (altındaki pencere yeniden çizilmez)
         def btn(t, f, prim=False):
             b = QPushButton(t, self); b.setFocusPolicy(Qt.NoFocus); b.setMinimumHeight(52); b.clicked.connect(f)
             b.setStyleSheet('QPushButton{background:%s;color:white;border:1px solid %s;border-radius:12px;padding:0 24px;font-size:19px;font-weight:600;}'
@@ -10408,7 +10411,8 @@ class HeartOverlay(QWidget):
         if g != self.geometry(): self.setGeometry(g)
         if not self.isVisible(): self.show()
         if not self.timer.isActive(): self.timer.start(66)   # K-429: 15 kare/sn
-        self.update()
+        # K-493: buradaki koşulsuz update(), ana ekranın her boyamasında katmanı, katman da ana ekranı yeniden boyatıyordu (durmayan döngü:
+        # sınav yerleri ekranı saniyede 50–60 kez baştan çiziliyor, tahta donuyordu). Katman zaten kendi zamanlayıcısıyla (15 kare/sn) boyanır.
     def paintEvent(self, e):
         it = self.item
         if not it: return

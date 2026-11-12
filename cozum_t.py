@@ -4,8 +4,14 @@ import tahta_kalem as tk
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import QTimer
 app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
+import os, shutil
+dd = os.path.expanduser('~/.local/share/umal-tahta')
+for ad in os.listdir(dd) if os.path.isdir(dd) else []:
+    if ad != 'tahta.json':
+        yol = os.path.join(dd, ad); (shutil.rmtree(yol, ignore_errors=True) if os.path.isdir(yol) else os.remove(yol))
 QMessageBox.warning = staticmethod(lambda *a, **k: print('UYARI', a[1:]))
-w = tk.Window(); w.showFullScreen(); app.processEvents()
+w = tk.Window(); w.resize(1200, 700); w.show(); app.processEvents()
+QTimer.singleShot(700, w.showFullScreen)
 def cek(ad): app.processEvents(); subprocess.run(['import', '-window', 'root', '/tmp/onizleme/cozum-%s.png' % ad])
 def bilgi(ad):
     c = w.solution_origin['card']; k = w.board.scale; vp = w.scroll.viewport()
@@ -16,6 +22,7 @@ def a1():
         if x is not None: x.hide()
     w.open_pdf_path(sorted(glob.glob('pdf/*.pdf'))[0])
 def a2():
+    vp = w.scroll.viewport(); print('ALT ÇUBUK: görünen alan altı %d, çubuğun altı %d, fark %d px' % (vp.geometry().bottom(), w.nav.geometry().bottom(), vp.geometry().bottom() - w.nav.geometry().bottom()))
     pr = w.doc[w.page].rect
     w.make_solution([(pr.width*0.07, pr.height*0.12), (pr.width*0.49, pr.height*0.62)])   # uzun (dikey) soru
 def a3(): bilgi('UZUN SORU'); cek('1-uzun'); w.soru_buyut()

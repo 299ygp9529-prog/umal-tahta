@@ -3933,7 +3933,14 @@ class Window(QMainWindow):
         if not text:return
         self.toast.setText(text);self.toast.show();self.place_overlays();self.toast_timer.start(4000)
     def eventFilter(self,obj,e):
-        if obj is getattr(self,'scroll',None) and e.type() in (QEvent.Resize,QEvent.Show):self.place_overlays()
+        if obj is getattr(self,'scroll',None) and e.type() in (QEvent.Resize,QEvent.Show):
+            self.place_overlays()
+            # K-477: bu an görünen alan henüz eski boyunda olabilir (olay, alan yeniden boyutlanmadan önce gelir): alt çubuk ve düğmeler
+            # eski yerinde kalıyordu (tam ekrana geçince ekranın ortasında). Boyut oturunca bir kez daha yerleştirilir.
+            t=getattr(self,'_yer_t',None)
+            if t is None:
+                t=self._yer_t=QTimer(self);t.setSingleShot(True);t.timeout.connect(self.place_overlays)
+            t.start(80)
         return super().eventFilter(obj,e)
     def open_shapes(self):
         self.refresh_colors()   # a tap must not change the button's own state

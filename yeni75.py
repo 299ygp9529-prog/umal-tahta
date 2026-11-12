@@ -5657,10 +5657,37 @@ class Window(QMainWindow):
         new = getattr(self, 'kelebek_new', None)
         if new is not None:
             self.kelebek = new; self.kelebek_new = None; self.deneme_inject()
+            QTimer.singleShot(3000, self.kelebek_duyuru_denetle)   # K-492: yeni sınav dağılımı → tahtada tam ekran duyuru (bir kez)
             try: self.sinav_plan_gonder()
             except Exception as e: print('sinav plani:', e)
             try: self.foto_gonder()
             except Exception as e: print('foto:', e)
+    def kelebek_duyuru_denetle(self):
+        """K-492: kelebek'e yeni (bugünkü ya da ileri tarihli) bir sınav dağılımı geldiyse sınıf tahtasında bir kez tam ekran duyuru.
+        Gösterilenler data_dir/kelebek-duyuru.json'da; yazarken, sınav saatinde ya da başka tam ekran açıkken bekler."""
+        import datetime
+        try:
+            if not class_grade(self.board_info().get('sinif')): return
+            today = datetime.date.today().isoformat(); yol = os.path.join(self.data_dir, 'kelebek-duyuru.json')
+            try:
+                with open(yol, encoding='utf-8') as f: gor = set(json.load(f))
+            except (OSError, ValueError, TypeError): gor = set()
+            yeni = [pl for pl in (self.kelebek or {}).get('planlar', []) if isinstance(pl, dict) and str(pl.get('tarih', '')) >= today and pl.get('ders') != DENEME_DERS
+                    and '%s|%s|%s' % (pl.get('tarih'), pl.get('ders'), pl.get('sinav')) not in gor]
+            if not yeni: return
+            st = exam_now(self.exam_clock(), getattr(self, 'exams', None))
+            mesgul = (st and st.get('phase') in ('before', 'during')) or kalem_mesgul(self) or getattr(self, '_sinav_su_an', False) \
+                or any(getattr(getattr(self, a_, None), 'isVisible', lambda: False)() for a_ in ('acil', 'kelebek_duyuru', 'anma_ekrani'))
+            if mesgul: QTimer.singleShot(20000, self.kelebek_duyuru_denetle); return
+            pl = sorted(yeni, key=lambda x: (str(x.get('tarih')), str(x.get('ders'))))[0]
+            gor.add('%s|%s|%s' % (pl.get('tarih'), pl.get('ders'), pl.get('sinav')))
+            try:
+                with open(yol + '.tmp', 'w', encoding='utf-8') as f: json.dump(sorted(gor), f, ensure_ascii=False)
+                os.replace(yol + '.tmp', yol)
+            except OSError: pass
+            self.board.finish(); self.kelebek_duyuru = KelebekDuyuru(self, pl); self.kelebek_duyuru.show(); self.kelebek_duyuru.raise_()
+            if len(yeni) > 1: QTimer.singleShot(1000, self.kelebek_duyuru_denetle)   # birden çok yeni sınav: sıradaki, bu kapanınca
+        except Exception as e: print('kelebek duyuru:', e)
     def foto_gonder(self):
         """Öğretmenler odası: kelebek fotoğraf paketi değişince öğrenci fotoğrafları DersMap'e (yalnız yeni/değişenler gider)."""
         if self.board_info().get('sinif') != 'Öğretmenler odası': return
@@ -15579,6 +15606,74 @@ class ClassDialog(QDialog):
             if k == 'section': b.setVisible(bool(valid) and it in valid)   # yalnız o seviyedeki şubeler
             b.setChecked((k == 'grade' and it == self.grade) or (k == 'section' and it == self.section) or (k == 'place' and it == self.value))
         self.shown.setText('Seçilen: <b>%s</b>' % (self.value or '—')); self.ok.setEnabled(bool(self.value))
+
+class KelebekDuyuru(QWidget):
+    """K-492: 'X sınavının kelebek dağılımı yapılmıştır' — tam ekran, lacivert + camgöbeği, okul logosu. Bir kez çizilip saklanır (zamanlayıcıyla yeniden çizim yok).
+    'Yerimi göster' sınıfın sınav yerleri ekranını açar; 'Kapat' ya da 2 dakika sonra kendiliğinden kapanır."""
+    def __init__(self, main, plan):
+        super().__init__(main); self.main = main; self.plan = plan; self._on = None
+        self.setAttribute(Qt.WA_DeleteOnClose); self.setAttribute(Qt.WA_OpaquePaintEvent); self.setGeometry(main.rect())
+        st_ = 'QPushButton{background:#0b1a30;color:#7ff6ff;border:2px solid #22e8ff;border-radius:%dpx;padding:0 %dpx;font-size:%dpx;font-weight:800;}QPushButton:pressed{background:#12425a;}'
+        self.b_yer = QPushButton('Yerimi göster', self); self.b_kapat = QPushButton('Kapat', self); self._st = st_
+        for b in (self.b_yer, self.b_kapat): b.setFocusPolicy(Qt.NoFocus)
+        self.b_yer.clicked.connect(self.yerim); self.b_kapat.clicked.connect(self.kapat)
+        QTimer.singleShot(120000, self.kapat); self.yerlestir()
+    def kapat(self):
+        try: self.close()
+        except RuntimeError: pass
+    def yerim(self):
+        m = self.main; self.kapat(); QTimer.singleShot(0, m.open_preview)
+    def resizeEvent(self, e): self._on = None; self.yerlestir()
+    def yerlestir(self):
+        W, H = self.width(), self.height(); k = min(W/1600, H/900) or 1
+        for b, ana in ((self.b_yer, True), (self.b_kapat, False)):
+            b.setStyleSheet((self._st % (int(18*k), int(46*k), max(16, int(30*k)))) + ('QPushButton{background:#22e8ff;color:#06202a;}' if ana else ''))
+            b.setFixedHeight(max(54, int(80*k))); b.adjustSize()
+        gap = int(24*k); tw = self.b_yer.width() + gap + self.b_kapat.width(); y = int(H - self.b_yer.height() - max(16, H*.035) - 54*k)
+        self.b_yer.move((W - tw)//2, y); self.b_kapat.move((W - tw)//2 + self.b_yer.width() + gap, y)
+    def paintEvent(self, e):
+        p = QPainter(self); W, H = self.width(), self.height()
+        if self._on is None or self._on.size() != self.size(): self._on = self.ciz(W, H)
+        p.drawPixmap(e.rect(), self._on, e.rect()); p.end()
+    def ciz(self, W, H):
+        import datetime
+        from PyQt5.QtGui import QFont, QFontMetrics, QRadialGradient, QLinearGradient
+        k = min(W/1600, H/900) or 1; fams = ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+        def font(px, b=False, ls=0):
+            f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k))); f.setBold(b)
+            if ls: f.setLetterSpacing(QFont.AbsoluteSpacing, ls*k)
+            return f
+        pm = QPixmap(W, H); p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.TextAntialiasing); p.setRenderHint(QPainter.SmoothPixmapTransform)
+        g = QRadialGradient(W/2, H*.42, max(W, H)*.75); g.setColorAt(0, QColor('#12305a')); g.setColorAt(.55, QColor('#0b1a30')); g.setColorAt(1, QColor('#060d18')); p.fillRect(QRectF(0, 0, W, H), g)
+        for w_, a in ((14, 26), (8, 55), (3, 200)):   # neon çerçeve
+            c = QColor('#22e8ff'); c.setAlpha(a); p.setPen(QPen(c, w_*k)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(QRectF(22*k, 22*k, W - 44*k, H - 44*k - max(16, H*.035)), 28*k, 28*k)
+        lg = QPixmap(LOGO_RESMI) if os.path.isfile(LOGO_RESMI) else QPixmap()
+        y = 70*k
+        if not lg.isNull():
+            s_ = 150*k; p.drawPixmap(QRectF(W/2 - s_/2, y, s_, s_), lg, QRectF(lg.rect())); y += s_ + 26*k
+        def yaz(r, t, f, renk, isil=False):
+            p.setFont(f)
+            if isil:
+                for d_, a in ((6, 30), (3, 60)):
+                    c = QColor(renk); c.setAlpha(a); p.setPen(c)
+                    for dx, dy in ((-d_, 0), (d_, 0), (0, -d_), (0, d_)): p.drawText(r.translated(dx*k, dy*k), Qt.AlignCenter, t)
+            p.setPen(QColor(renk)); p.drawText(r, Qt.AlignCenter, t)
+        yaz(QRectF(0, y, W, 44*k), 'ÜMRANİYE MERKEZ ANADOLU LİSESİ', font(24, True, 5), '#9fb3cc'); y += 70*k
+        ad = tr_title(str(self.plan.get('sinav') or 'Sınav')).strip(' -') or 'Sınav'
+        f_ = font(104, True)
+        while f_.pixelSize() > 30 and QFontMetrics(f_).horizontalAdvance(ad + ' Sınavı') > W*.86: f_.setPixelSize(int(f_.pixelSize()*.92))
+        yaz(QRectF(0, y, W, 140*k), ad + ' Sınavı', f_, '#7ff6ff', True); y += 150*k
+        yaz(QRectF(0, y, W, 70*k), 'kelebek dağılımı yapılmıştır', font(52), '#ffffff'); y += 92*k
+        try:
+            d_ = datetime.date.fromisoformat(str(self.plan.get('tarih'))); gun = '%d %s %s' % (d_.day, TR_MONTHS[d_.month - 1], TR_DAYS[d_.weekday()])
+            if d_ == datetime.date.today(): gun = 'Bugün · ' + gun
+            elif d_ == datetime.date.today() + datetime.timedelta(days=1): gun = 'Yarın · ' + gun
+        except Exception: gun = str(self.plan.get('tarih') or '')
+        tt = gun + ('  ·  ' + str(self.plan.get('ders')) if self.plan.get('ders') else '')
+        f2 = font(34, True); tw = QFontMetrics(f2).horizontalAdvance(tt) + 70*k; r_ = QRectF(W/2 - tw/2, y, tw, 66*k)
+        p.setPen(QPen(QColor('#ffe14d'), 2.5*k)); p.setBrush(QColor(40, 30, 4, 200)); p.drawRoundedRect(r_, 18*k, 18*k); yaz(r_, tt, f2, '#ffe14d'); y += 100*k
+        yaz(QRectF(0, y, W, 56*k), 'Yerlerinize bakabilirsiniz', font(38), '#c9d6ea')
+        p.end(); return pm
 
 class AcilMesaj(QWidget):
     """K-341: tahtayı kaplayan yönetim mesajı. Başlık ve metin kendi alanlarına sığacak boyda yazılır (üst üste binmez)."""

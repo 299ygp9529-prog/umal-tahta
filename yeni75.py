@@ -15682,6 +15682,10 @@ class KelebekDuyuru(QWidget):
             elif d_ == datetime.date.today() + datetime.timedelta(days=1): gun = 'Yarın · ' + gun
         except Exception: gun = str(self.plan.get('tarih') or '')
         tt = gun + ('  ·  ' + str(self.plan.get('ders')) if self.plan.get('ders') else '')
+        try:   # ders saati: 12.10–12.50
+            sp = exam_span(d_.weekday(), self.plan.get('ders'), d_); hm = lambda x: '%02d.%02d' % (x//3600, x % 3600//60)
+            if sp: tt += '  ·  %s–%s' % (hm(sp[0]), hm(sp[1]))
+        except Exception: pass
         f2 = font(34, True); tw = QFontMetrics(f2).horizontalAdvance(tt) + 70*k; r_ = QRectF(W/2 - tw/2, y, tw, 66*k)
         p.setPen(QPen(QColor('#ffe14d'), 2.5*k)); p.setBrush(QColor(40, 30, 4, 200)); p.drawRoundedRect(r_, 18*k, 18*k); yaz(r_, tt, f2, '#ffe14d'); y += 100*k
         yaz(QRectF(0, y, W, 56*k), 'Yerlerinize bakabilirsiniz', font(38), '#c9d6ea')

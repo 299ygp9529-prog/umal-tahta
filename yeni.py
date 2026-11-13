@@ -7316,7 +7316,7 @@ class Window(QMainWindow):
             if hasattr(self,'nav'):self.place_overlays()
         except Exception as e: QMessageBox.warning(self,'Sayfa görüntülenemedi',str(e))
     def erisim_kilitli(self):
-        er_ = getattr(self, 'erisim', None); return bool(er_ is not None and er_.kilitli)
+        er_ = getattr(self, 'erisim', None); return bool(ERISIM_ZORLA and er_ is not None and er_.kilitli)   # K-533: kilitte de küçültülebilir
     def fullscreen(self):
         if self.erisim_kilitli():   # K-450: teneffüs / kilit: tam ekrandan çıkılamaz (küçültüp başka programlara dokunulmasın)
             if not self.isFullScreen(): self.showFullScreen()
@@ -9169,13 +9169,15 @@ class SalonBrowser(QWidget):
         self.update()
     def resizeEvent(self, e): self.relayout()
     def relayout(self):
-        W = self.width(); x = 32; y = 92
+        W = self.width(); x = 32; y = 92; sag = 32 + 4*106   # K-534: sınav düğmeleri sol sütunda alt alta sarar (salon planına binmez)
         for b in self.exam_btns:
-            b.adjustSize(); b.move(int(x), int(y)); x += b.width() + 10
+            b.adjustSize()
+            if x > 32 and x + b.width() > sag: x = 32; y += b.height() + 10
+            b.move(int(x), int(y)); x += b.width() + 10
         self.close_btn.adjustSize(); self.close_btn.move(W - self.close_btn.width() - 32, 24)
         self.deneme_btn.adjustSize(); self.deneme_btn.move(W - self.close_btn.width() - self.deneme_btn.width() - 48, 24)
         self.ara_btn.adjustSize(); self.ara_btn.move(self.deneme_btn.x() - self.ara_btn.width() - 16, 24)
-        cols = 4; bw = 96; gx = 32; gy = 170
+        cols = 4; bw = 96; gx = 32; gy = (max(b.geometry().bottom() for b in self.exam_btns) + 22) if self.exam_btns else 170; self._salon_y = gy
         for n, b in enumerate(self.salon_btns.values()):
             b.setFixedWidth(bw); b.move(int(gx + (n % cols)*(bw + 10)), int(gy + (n // cols)*58))
     def paintEvent(self, e):
@@ -9198,12 +9200,12 @@ class SalonBrowser(QWidget):
         hm = lambda x: '%02d.%02d' % (x//3600, x%3600//60)
         p.setFont(font(22)); p.setPen(QColor('#8ea3c0'))
         teach = ', '.join(cell.get('ogretmen', [])) if cell else '—'
-        ty = 170 + math.ceil(len(self.salon_btns)/4)*58 + 24   # salon düğmelerinin altında
+        ty = getattr(self, '_salon_y', 170) + math.ceil(len(self.salon_btns)/4)*58 + 24   # salon düğmelerinin altında
         p.drawText(QRectF(32, ty, L - 52, 160), Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
                    '%s  ·  %s – %s\nSalonda dersi olan öğretmen:\n%s' % (lesson, hm(a), hm(b), teach))
         plan_ = dict(tur='salon', sinif=self.salon, liste=lst)
         if seat_layout(plan_):   # salonun gerçek sıra düzeni (sınav anındaki tahta görünümü)
-            top2 = max([76] + [b.geometry().bottom() + 12 for b in self.exam_btns if b.isVisible()])   # sınav düğmelerinin altı
+            top2 = self.close_btn.geometry().bottom() + 8   # K-534: hemen üst düğmelerin altından (sınav seçimi sol sütunda; aradaki boş şerit kalktı)
             R2 = QRectF(L - 10, top2, self.width() - L - 22, self.height() - top2 - 14); k2 = min(R2.width()/1600, R2.height()/900)
             def font2(px, b=False): f = QFont(famb if b else fam); f.setPixelSize(max(10, int(px*k2))); f.setWeight(QFont.Bold if b else QFont.Medium); return f
             p.save(); p.translate(R2.topLeft())
@@ -13069,6 +13071,7 @@ ATLAS_SECENEK = {
 }
 
 # ---- K-377: teneffüs kilidi, Tahta Kontrol, akşam kapanış, sabah uyanma --------------------------------
+ERISIM_ZORLA = False   # K-533: True olursa teneffüs/kilitte tarayıcı, uçbirim vb. kapatılır, öteki pencereler küçültülür
 ERISIM_ENGEL = {   # teneffüste / kilitte kapatılan programlar (tarayıcı, müzik-video, dosya yöneticisi, uçbirim)
     'firefox', 'firefox-esr', 'firefox-bin', 'chromium', 'chromium-browse', 'chrome', 'google-chrome', 'opera', 'brave', 'brave-browser', 'vivaldi-bin',
     'epiphany', 'midori', 'falkon', 'konqueror', 'yandex_browser', 'msedge', 'vlc', 'totem', 'rhythmbox', 'audacious', 'mpv', 'smplayer', 'celluloid',
@@ -13167,7 +13170,7 @@ class ErisimYoneticisi:
             self.kilitli, self.kod, self.kim = kil, kod, kim; self._ilk_kucult = False; self.uygula(kil)
             try: m.send_state()
             except Exception: pass
-        if kil: self.zorla()
+        if kil and ERISIM_ZORLA: self.zorla()   # K-533: kapalı — kilitte başka programlar kapatılmaz / küçültülmez
         try: self.kapanis_denetle()
         except Exception as e: print('kapanış:', e)
         try: self.uyanma_yaz()
@@ -13177,7 +13180,7 @@ class ErisimYoneticisi:
         m = self.m
         try:
             # K-386: 'her zaman üstte' yok (pencereyi yeniden kurar, açık anket/klavye arkada kalıp tahta donmuş görünüyordu)
-            if kil and QApplication.activeModalWidget() is None and not m.isFullScreen(): m.showFullScreen()
+            if kil and ERISIM_ZORLA and QApplication.activeModalWidget() is None and not m.isFullScreen(): m.showFullScreen()
         except Exception as e: print('erişim uygula:', e)
         if kil: m.show_toast('Teneffüs: tahtada yalnız Atlas açık · Oyunlar, Günün soruları ve Atlas kullanılabilir' if self.kod == 'teneffus' else
                              ('Bu ders için tahta kilitlendi (boş ders)' if self.kod == 'bosders' else 'Tahta kilitli · yalnız Atlas açık'))

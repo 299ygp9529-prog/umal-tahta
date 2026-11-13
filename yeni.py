@@ -6648,6 +6648,8 @@ class Window(QMainWindow):
                 o_ = getattr(self, 'solution_origin', None); c = None
                 if o_ and o_.get('card') and ((self.doc.metadata or {}).get('keywords') or '') == 'UMAL-solution':
                     c_ = o_['card']; c = (id(self.doc), self.page, QRectF(c_[0] - 10, c_[1] - 10, c_[2] - c_[0] + 20, c_[3] - c_[1] + 20))
+                elif ((self.doc.metadata or {}).get('keywords') or '') == 'UMAL-graph':   # K-536: grafik sayfası: grafik ve İncele şeridi kalan alana sığar, panelin altında kalmaz
+                    c = (id(self.doc), self.page, QRectF(0, 0, self.doc[self.page].rect.width, GRAFIK_H + 80))
                 if not c: return
             if getattr(self.board, 'active', None) is not None: return   # yazarken dokunma
             r = c[2]; vp = self.scroll.viewport(); gen = vp.width()
@@ -14561,6 +14563,25 @@ class AtlasPanel(QFrame):
         elif bs.isVisible(): bs.hide(); bs.setFixedWidth(0)
     def showEvent(self, e): super().showEvent(e); self.yer_ayir()
     def hideEvent(self, e): super().hideEvent(e); self.yer_ayir()
+    def grafik_resmi_al(self):
+        """K-537: tam ekranda yanda gösterilecek grafik resmi: Atlas'ın verdiği fonksiyon(lar) ya da tahtada açık grafik sayfası."""
+        try:
+            mr = self.main.rect(); gen = max(420, int(mr.width()*0.42)); yuk = max(230, int(mr.height()*0.66))
+            anahtar = (tuple(self.grafik), id(getattr(self.main, 'doc', None)), gen, yuk)
+            if getattr(self, '_gpm', (None, None))[0] == anahtar: return self._gpm[1]
+            pm = None
+            if self.grafik:
+                fs = []
+                for i, f in enumerate(self.grafik[:2]):
+                    fn, _ = graph_compile(f)
+                    if fn: fs.append((f, fn, GRAFIK_RENK[i % len(GRAFIK_RENK)]))
+                if fs:
+                    d_ = graph_build(fs); pm = grafik_resmi(d_, gen); d_.close()
+            elif getattr(self.main, 'doc', None) is not None and ((self.main.doc.metadata or {}).get('keywords') == 'UMAL-graph'):
+                pm = grafik_resmi(self.main.doc, gen)
+            if pm is not None and pm.height() > yuk: pm = pm.scaled(gen, yuk, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self._gpm = (anahtar, pm); return pm
+        except Exception as e: print('atlas grafik:', e); return None
     def tam_ekran(self, tam):
         """K-350: Atlas tam ekran: büyük maskot, seçenekler tek satır, cevap ortada kitap gibi ferah."""
         self.tam = bool(tam); self.tam_b.setText('⤡ Küçült' if self.tam else '⤢ Tam ekran')
@@ -14571,7 +14592,8 @@ class AtlasPanel(QFrame):
         self.baslik.setStyleSheet('font-size:%dpx;font-weight:800;color:#7ff6ff;' % (40 if t else 30))
         v, ust = self.v_ana, self.ust_sat   # K-363: tam ekranda menüler Atlas'ın yanında, cevap alanı büyük
         # K-474: tam ekranda soru önizlemesi çözümün solunda büyük durur (çözüm alanı küçülmez); kenardayken eski yerinde (başlığın altında)
-        yan = bool(t and self.resim is not None and not self.resim.isNull())
+        gpm = self.grafik_resmi_al() if t else None   # K-537: tam ekranda grafik (Atlas'ın fonksiyonu ya da açık grafik sayfası) solda büyük
+        yan = bool(t and ((self.resim is not None and not self.resim.isNull()) or gpm is not None))
         if yan and self.orta.indexOf(self.onizleme) < 0:
             v.removeWidget(self.onizleme); self.orta.insertWidget(0, self.onizleme, 0, Qt.AlignTop)
         elif not yan and v.indexOf(self.onizleme) < 0:
@@ -14602,6 +14624,11 @@ class AtlasPanel(QFrame):
             kr = self._kirp[1]; mr = self.main.rect()
             kutu = (max(420, int(mr.width()*0.42)), max(230, int(mr.height()*0.66))) if t else (420, 150)
             self.onizleme.setPixmap(kr.scaled(kutu[0], kutu[1], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if t and gpm is not None and (self.resim is None or self.resim.isNull()):
+            self.onizleme.setPixmap(gpm); self.onizleme.setStyleSheet('background:#1d262d;border-radius:14px;padding:6px;border:2px solid #2a4468;'); self.onizleme.show()
+        elif self.resim is None or self.resim.isNull():
+            self.onizleme.hide()
+        if not (t and gpm is not None and (self.resim is None or self.resim.isNull())): self.onizleme.setStyleSheet('background:#ffffff;border-radius:10px;padding:4px;')
 
     def ses_dugme(self):
         if self.ses_proc is not None: self.ses_bitir(); return
@@ -14692,6 +14719,7 @@ class AtlasPanel(QFrame):
                 self.cevap = yabanci_yazi_temizle(d['cevap']); self.metin.setPlainText(self.cevap, True); self.yaz_b.setEnabled(True)
                 self.grafik = [f for f in (d.get('grafik') or [])[:2] if isinstance(f, str) and graph_compile(f)[0]]
                 self.grafik_b.setVisible(bool(self.grafik))
+                if self.tam: self._duzen()   # K-537: grafik yanda
                 if d.get('sayi') and d.get('sinir'): self.durum.setText('Bugün %s / %s' % (d['sayi'], d['sinir']))
                 self.maskot.ifade('konusma'); QTimer.singleShot(1800, lambda: self.maskot.ifade('mutluluk')); QTimer.singleShot(4200, lambda: self.isVisible() and self.maskot.ifade('bekleme'))
             else:
@@ -16441,7 +16469,9 @@ class TriangleDialog(QDialog):
         self.ok = QPushButton('Tahtaya koy'); self.ok.setObjectName('primary'); self.ok.setMinimumHeight(50); self.ok.clicked.connect(self.place); btns.addWidget(self.ok)
         self.target = None; self.set_mode(cfg.get('mode', 'sas'))
     def eventFilter(self, o, e):
-        if e.type() in (QEvent.FocusIn, QEvent.MouseButtonPress) and o in self.fields: self.target = o
+        if e.type() in (QEvent.FocusIn, QEvent.MouseButtonPress) and o in self.fields:
+            if e.type() == QEvent.MouseButtonPress or o is not self.target: self.ust_mod = False   # K-535: başka yere dokununca üs biter
+            self.target = o
         return False
     def key(self, k):
         t = self.target or next((f for f in self.fields if f.isVisible()), None)
@@ -16547,10 +16577,14 @@ class TemplateDialog(QDialog):
 # Grafik çizici: y = f(x) (log, ln, üstel, sin/cos/tan, mutlak değer, kök…) → yeni tahta sekmesinde vektör grafik
 import re as _re
 _SUB = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+_UST_GERI = str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺ˣ', '0123456789-+x')
+def ust_coz(s):
+    """K-535: üst simge dizisi (x¹², 2⁻³, eˣ⁺¹) → ^(12), ^(-3), ^(x+1)."""
+    return _re.sub(r'[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺ˣ]+', lambda m: '^(%s)' % m.group(0).translate(_UST_GERI), s)
 def graph_compile(expr):
     """Öğretmenin yazdığını güvenli Python ifadesine çevirir. Döner: (işlev, hata)."""
     s0 = expr.strip()
-    s = s0.lower().replace(' ', '').replace('−', '-').replace('·', '*').replace('×', '*').replace('÷', '/')
+    s = ust_coz(s0).lower().replace(' ', '').replace('−', '-').replace('·', '*').replace('×', '*').replace('÷', '/')
     s = _re.sub(r'^(y|f\(x\))=', '', s)
     if not s: return None, 'Fonksiyonu yazın.'
     s = _re.sub(r'(\d),(\d)', r'\1.\2', s)
@@ -16588,7 +16622,7 @@ def graph_compile(expr):
 def grafik_latex(ifade):
     """K-350: Grafik çizicide öğretmenin yazdığı fonksiyonu kitap yazımına çevirir (x^2 → x², 1/(x-2) → kesir, √(x) → kök)."""
     import re
-    s = ifade.strip().replace('**', '^').replace('−', '-').replace('×', '*').replace('÷', '/')
+    s = ust_coz(ifade.strip()).replace('**', '^').replace('−', '-').replace('×', '*').replace('÷', '/')
     s = re.sub(r'^(y|f\(x\))\s*=\s*', '', s)
     s = s.replace('²', '^2').replace('³', '^3').replace('ˣ', '^x').replace('π', 'pi')
     s = re.sub(r'log([₀-₉]+)', lambda m: 'log_' + m.group(1).translate(str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')), s)
@@ -16985,7 +17019,7 @@ class GraphDialog(QDialog):
     dokununca yalnız o işaret (kökler, tepe noktası…), parmakla iz sürme; kara tahta görünümü."""
     COLORS = GRAFIK_RENK
     SABLON = [('xⁿ', '^(□)'), ('□/□', '(□)/(□)'), ('√□', '√(□)'), ('ⁿ√□', 'kök(□,□)'), ('|□|', '|□|'), ('log□(□)', 'log_□(□)'),
-              ('ln(□)', 'ln(□)'), ('e^□', 'e^(□)'), ('aˣ', '□^x'), ('sin', 'sin(□)'), ('cos', 'cos(□)'), ('tan', 'tan(□)')]
+              ('ln(□)', 'ln(□)'), ('eⁿ', 'e^(□)'), ('aˣ', '□ˣ'), ('sin', 'sin(□)'), ('cos', 'cos(□)'), ('tan', 'tan(□)')]
     TUS = ['x', 'π', '(', ')', ',', '⌫', '7', '8', '9', '+', '−', '·', '4', '5', '6', '1', '2', '3', '0', '◀', '▶', 'Temizle']
     def __init__(self, main):
         super().__init__(main); self.main = main; self.setWindowTitle('Grafik çizici'); self.setModal(True); self.setStyleSheet(GRAFIK_STIL)
@@ -17042,7 +17076,9 @@ class GraphDialog(QDialog):
         QTimer.singleShot(0, self.alan_degisti)
     # --- yazım ---
     def eventFilter(self, o, e):
-        if e.type() in (QEvent.FocusIn, QEvent.MouseButtonPress) and o in self.fields: self.target = o
+        if e.type() in (QEvent.FocusIn, QEvent.MouseButtonPress) and o in self.fields:
+            if e.type() == QEvent.MouseButtonPress or o is not self.target: self.ust_mod = False   # K-535: başka yere dokununca üs biter
+            self.target = o
         pv = getattr(self, 'preview', None)
         if pv is not None and o is pv and e.type() in (QEvent.MouseButtonPress, QEvent.MouseMove) and (e.buttons() & Qt.LeftButton):
             self.iz_sur(e.pos()); return True
@@ -17052,13 +17088,28 @@ class GraphDialog(QDialog):
         i = t.text().find('□', bas)
         if i >= 0: t.setSelection(i, 1); return True
         return False
+    UST = str.maketrans('0123456789−-+x', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁻⁺ˣ')
     def ekle(self, s_):
-        t = self.target; pos = t.cursorPosition(); sec = t.selectedText()
+        t = self.target
+        if s_ == 'e^(□)':
+            if t.selectedText() == '□': t.del_()
+            t.insert('e'); self.ust_mod = True; t.setFocus(); return
+        if s_ == '^(□)':   # K-535: üs kitaptaki gibi küçük ve yukarıda yazılır (x² gibi); tabanı yoksa x konur
+            if t.selectedText() == '□': t.del_()
+            on = t.text()[:t.cursorPosition()].rstrip()
+            if not on or not (on[-1].isalnum() or on[-1] in ')π□⁰¹²³⁴⁵⁶⁷⁸⁹ˣ'): t.insert('x')
+            self.ust_mod = True; t.setFocus(); return
+        pos = t.cursorPosition(); sec = t.selectedText()
         if sec == '□': t.del_()
         pos = t.cursorPosition(); t.insert(s_); t.setFocus()
         self.kutuya_git(t, pos) or t.setCursorPosition(pos + len(s_))
     def tus(self, k):
         t = self.target
+        if getattr(self, 'ust_mod', False):   # K-535: üs yazılıyor
+            if k in '0123456789−+x' and len(k) == 1: t.insert(k.translate(self.UST)); t.setFocus(); return
+            if k == '(': self.ust_mod = False; t.insert('^('); t.setFocus(); return
+            if k != '⌫': self.ust_mod = False
+            if k == '▶': t.setFocus(); return
         if k == '⌫': t.backspace()
         elif k == 'Temizle': t.clear()
         elif k == '◀': t.cursorBackward(False)

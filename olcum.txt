@@ -1,0 +1,9 @@
+ultra çıkış 0
+sinif 9-A program var: True
+bugün: [(1, '08.00', 'Matematik', 'Deneme Öğretmen Bir', 'bitti'), (2, '08.50', 'Matematik', 'Deneme Öğretmen Bir', 'bitti'), (3, '09.40', 'Türk Dili ve Edebiyatı', 'Örnek Hoca İki', 'bitti'), (4, '10.30', 'Fizik', 'Test Öğretmen Üç', 'sira'), (5, '11.20', 'İngilizce', 'Deneme Dört', ''), (6, '12.30', 'İngilizce', 'Deneme Dört', ''), (7, '13.20', 'Biyoloji', 'Örnek Beş', ''), (8, '14.10', 'Tarih', 'Test Altı', '')]
+faz teneffus dersler 8
+başka cihaz sonrası: 9-A
+komut sonrası: 10-B [{'zaman': 1794627702.8223195, 'eski': '9-A', 'yeni': '10-B', 'kim': 'İdare'}]
+geçersiz sonrası: 10-B
+== Öğretmenler odası: çıkış kodu 124 (124 = açık kaldı)
+== 9-A: çıkış kodu 124 (124 = açık kaldı)

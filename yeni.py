@@ -86,7 +86,7 @@ PREMIUM_ICONS = {
     'Post-it': (0xe348, '#f59e0b'), 'Perde': (0xeb16, '#f97316'), 'Spot ışığı': (0xe246, '#fb923c'), 'Alkış': (0xe81a, '#d946ef'), 'Oyunlar': (0xe26e, '#22c55e'), 'Anket': (0xe196, '#06b6d4'), 'Okul araçları': (0xe62c, '#22e8ff'), 'Rehberlik': (0xe63c, '#f59e0b'), 'Proje seçimi': (0xe0e6, '#8b5cf6'),
     'Geri al': (0xe038, '#64748b'), 'İleri al': (0xe036, '#64748b'), 'Ekrana yaz': (0xe654, '#06b6d4'), 'PDF kaydet': (0xe248, '#ef4444'),
     'Günün soruları': (0xe2f6, '#22c55e'), 'Araçlar': (0xe464, '#6366f1'), 'Ayarlar': (0xe272, '#94a3b8'), 'Tam ekran': (0xe0a2, '#64748b'),
-    'Sayaç': (0xe492, '#f97316'), 'Hesap makinesi': (0xe538, '#0ea5e9'), 'PDF aç': (0xe702, '#ef4444'), 'Yeni tahta': (0xe236, '#2f7cf6'),
+    'Sayaç': (0xe492, '#f97316'), 'Takvim': (0xe108, '#22e8ff'), 'Hesap makinesi': (0xe538, '#0ea5e9'), 'PDF aç': (0xe702, '#ef4444'), 'Yeni tahta': (0xe236, '#2f7cf6'),
     'Tema': (0xe6c8, '#d946ef'), 'Gizle': (0xe224, '#64748b'), 'Tahtaya dön': (0xe08a, '#2f7cf6'), "PDF'ye yaz": (0xe34c, '#2f7cf6'),
     'Akıcı': (0xe3ac, '#2f7cf6'), 'Neon': (0xe6a2, '#d946ef'),
     'Grafik çizici': (0xe154, '#2f7cf6'), 'Şablonlar': (0xec8c, '#0ea5a4'), 'Cetvel': (0xe6b8, '#eab308'), 'Pergel': (0xea0e, '#8b5cf6'),
@@ -6276,6 +6276,15 @@ class Window(QMainWindow):
         nxt = plans[(idx + 1) % len(plans)] if len(plans) > 1 else None
         other = ('%s · %d %s' % (nxt[2], nxt[1].day, TR_MONTHS[nxt[1].month-1])) if nxt else ''
         return dict(key=key, lesson=lesson, exams=exams or {'': 'Ortak Yazılı Sınav'}, start=a, end=b, t=t, phase='preview', date=day, today=now.date(), diger=other)
+    def ders_programi_var(self):
+        sinif = self.board_info().get('sinif', '')
+        return bool(class_grade(sinif)) and any(lesson_cell(sinif, g, n) for g in range(5) for n in range(1, 9))
+    def open_ders_programi(self):
+        """K-544: sınıfın haftalık ders programı (tam ekran, hareketsiz; dokununca ya da 30 sn sonra kapanır)."""
+        if not self.ders_programi_var(): self.show_toast('Bu tahta için ders programı yok.'); return
+        self.board.finish()
+        if getattr(self, 'ders_prog', None) is None: self.ders_prog = DersProgramiEkran(self)
+        self.ders_prog.ac(self.board_info().get('sinif', ''), self.exam_clock())
     def open_games(self):
         """Oyun köşesi (tam ekran). Bu tahtada sınav geri sayımı/sınav varsa açılmaz."""
         grade = class_grade(self.board_info().get('sinif'))
@@ -8661,6 +8670,25 @@ def lesson_cell(sinif, weekday, n):
         except (OSError, ValueError, AttributeError): _LESSON_TABLE['_'] = {}
     return _LESSON_TABLE.get(str(sinif or ''), {}).get('%d-%d' % (weekday, n))
 
+def ogretmen_adi(s_):
+    """'Ahmet Fehmi ÇAM' → 'Ahmet Fehmi Çam' (yalnız tamamı büyük harfli kelimeler)."""
+    low = lambda w: w.replace('I', 'ı').replace('İ', 'i').lower()
+    return ' '.join((w[0] + low(w[1:])) if len(w) > 1 and w == w.upper() and w.isalpha() else w for w in str(s_ or '').split())
+def bugun_dersleri(sinif, now):
+    """K-544: bu sınıfın bugünkü dersleri (ders programından): [(no, 'hh.mm', ders, öğretmen, durum)] — durum 'bitti' / 'simdi' / 'sira' / ''."""
+    if now.weekday() > 4: return []
+    t = now.hour*3600 + now.minute*60 + now.second; out = []; sira_ = False
+    for name, a, b, kind in bell_periods(now.weekday()):
+        if kind != 'lesson': continue
+        try: n = int(name.split('.')[0])
+        except ValueError: continue   # DYK
+        c = lesson_cell(sinif, now.weekday(), n)
+        if not c: continue
+        d = 'bitti' if b <= t else ('simdi' if a <= t else '')
+        if d == '' and not sira_ and not any(x[4] == 'simdi' for x in out): d = 'sira'; sira_ = True
+        out.append((n, '%02d.%02d' % (a//3600, a%3600//60), c.get('ders', ''), ', '.join(ogretmen_adi(o) for o in (c.get('ogretmen') or [])), d))
+    return out
+
 def class_grade(sinif):
     s = str(sinif or '').strip()
     g = s.split('-')[0].strip()
@@ -8692,8 +8720,10 @@ def teneffus_info(now, exams, grade, sinif=''):
     nowtxt = (cur[0] if cur and cur[0] != 'Teneffüs' else 'Teneffüs') if cur else ''
     if after: nowtxt = (nowtxt + '  ·  ' if nowtxt else '') + 'Sıradaki: %s  %02d.%02d' % (after[0], after[1]//3600, after[1]%3600//60)
     if sinavsiz:
+        try: dersler = bugun_dersleri(sinif, now)   # K-544: teneffüs ekranında bugünün dersleri
+        except Exception: dersler = []
         return dict(saat='%02d.%02d' % (now.hour, now.minute), tarih='%s · %d %s' % (TR_DAYS[now.weekday()], now.day, TR_MONTHS[now.month-1]),
-                    simdi=nowtxt, sonraki=None, kalan=None, gunler=[])
+                    simdi=nowtxt, sonraki=None, kalan=None, gunler=[], dersler=dersler, sinif=sinif)
     start = datetime.datetime.combine(nxt[0], datetime.time()) + datetime.timedelta(seconds=nxt[1]); left = max(0, int((start - now).total_seconds()))
     days, d = [], today
     while len(days) < 5:
@@ -8748,6 +8778,7 @@ class ExamScreen(QWidget):
         self.ara_btn = neon_button(self, main.open_ara, 22)
         self.yer_btn = neon_button(self, main.open_preview, 24); self.yer_btn.setText('  Sınav yerleri'); self.yer_btn.setIcon(tool_icon('Sayaç')); self.yer_btn.setIconSize(QSize(30, 30)); self.yer_btn.hide()   # teneffüs modu: sağ altta
         self.okul_btn = neon_button(self, main.open_okul, 24); self.okul_btn.setText('  Okul araçları'); self.okul_btn.setIcon(tool_icon('Okul araçları')); self.okul_btn.setIconSize(QSize(30, 30)); self.okul_btn.hide()   # teneffüs: panel gizli, araçlar buradan
+        self.dp_btn = neon_button(self, main.open_ders_programi, 24); self.dp_btn.setText('  Haftalık ders programı'); self.dp_btn.setIcon(tool_icon('Takvim')); self.dp_btn.setIconSize(QSize(30, 30)); self.dp_btn.hide()   # K-544
     def place_ara(self):
         """'Nerede sınava gireceğim?' en üstte, ortada."""
         self.ara_btn.adjustSize(); self.ara_btn.move((self.width() - self.ara_btn.width())//2, 12); self.ara_btn.raise_()
@@ -8895,6 +8926,10 @@ class ExamScreen(QWidget):
         if tk_ != self.okul_btn.isVisible() or tk_:
             self.okul_btn.setVisible(tk_); self.okul_btn.adjustSize()
             self.okul_btn.move(24, self.height() - self.okul_btn.height() - 24); self.okul_btn.raise_()   # sol altta (sağ alt: Sınav yerleri / Gizle)
+        dp_ = tk_ and self.main.ders_programi_var()   # K-544: bu sınıfın ders programı varsa
+        if dp_ != self.dp_btn.isVisible() or dp_:
+            self.dp_btn.setVisible(dp_); self.dp_btn.adjustSize()
+            self.dp_btn.move(self.okul_btn.x() + self.okul_btn.width() + 16, self.height() - self.dp_btn.height() - 24); self.dp_btn.raise_()
         if True:
             self.hide_btn.adjustSize(); self.hide_btn.move((self.yer_btn.x() - self.hide_btn.width() - 16) if tn_ else (self.width() - self.hide_btn.width() - 20), self.height() - self.hide_btn.height() - (34 if tn_ else 20))
         other = st.get('diger') if st.get('phase') == 'preview' else ''
@@ -10903,6 +10938,38 @@ def hb_wrap(cls):
         inner(self, e)
         hb_sync(self)
     cls.paintEvent = paintEvent
+_TN_SERIT = {}
+DERS_RENK = (('Matematik', '#22e8ff'), ('Fizik', '#5aa8ff'), ('Kimya', '#3ef08a'), ('Biyoloji', '#7bd88f'), ('İngilizce', '#ff9a3a'), ('Edebiyat', '#ff6b8a'),
+             ('Türk Dili', '#ff6b8a'), ('Müzik', '#d68cff'), ('Görsel', '#d68cff'), ('Din', '#ffd166'), ('Kur', '#ffd166'), ('Peygamber', '#ffd166'), ('Ahlak', '#ffd166'),
+             ('Tarih', '#ffb26b'), ('İnkılap', '#ffb26b'), ('Coğrafya', '#f4a261'), ('Felsefe', '#c3a6ff'), ('Rehberlik', '#b06bff'), ('Beden', '#3ef08a'), ('Spor', '#3ef08a'))
+def ders_rengi(d):
+    return next((c for k_, c in DERS_RENK if k_ in str(d)), '#7ff6ff')
+def draw_ders_seridi(p, W, k, font, dersler, sinif):
+    """K-544: teneffüs ekranının altında 'Bugünkü dersler' — biten soluk ve ✓, sıradaki camgöbeği çerçeveli."""
+    from PyQt5.QtGui import QFontMetrics
+    def text(r, s_, f, c, al=Qt.AlignLeft | Qt.AlignVCenter): p.setFont(f); p.setPen(QColor(c)); p.drawText(r, al, s_)
+    x0 = 60*k; f1 = font(22, True); t1 = 'BUGÜNKÜ DERSLER'; w1 = QFontMetrics(f1).horizontalAdvance(t1)
+    text(QRectF(x0, 20*k, w1 + 10*k, 34*k), t1, f1, '#9fb3cc'); text(QRectF(x0 + w1 + 16*k, 20*k, 300*k, 34*k), '·  ' + str(sinif), f1, '#7ff6ff')
+    n = max(1, len(dersler)); gap = 14*k; cw = (W - 2*x0 - (n - 1)*gap)/n; top = 76*k; ch = 196*k
+    for i, (no, hm_, ders, hoca, d) in enumerate(dersler):
+        r = QRectF(x0 + i*(cw + gap), top, cw, ch); sira = d in ('sira', 'simdi'); p.setOpacity(.38 if d == 'bitti' else 1)
+        p.setPen(QPen(QColor('#22e8ff'), 3*k) if sira else QPen(QColor(255, 255, 255, 34), 1.4*k)); p.setBrush(QColor(34, 232, 255, 30) if sira else QColor(255, 255, 255, 13))
+        p.drawRoundedRect(r, 18*k, 18*k)
+        p.setPen(Qt.NoPen); p.setBrush(QColor(ders_rengi(ders))); p.drawRoundedRect(QRectF(r.x(), r.y() + 16*k, 6*k, r.height() - 32*k), 3*k, 3*k)
+        ix = r.x() + 16*k; iw = r.width() - 28*k
+        text(QRectF(ix, r.y() + 12*k, iw, 30*k), '%d. Ders' % no, font(19, True), '#ffffff'); text(QRectF(ix, r.y() + 12*k, iw, 30*k), hm_, font(17), '#9fb3cc', Qt.AlignRight | Qt.AlignVCenter)
+        fd = font(22, True)
+        while fd.pixelSize() > 11 and QFontMetrics(fd).boundingRect(QRectF(ix, 0, iw, 80*k).toRect(), Qt.TextWordWrap, ders).height() > 80*k: fd.setPixelSize(fd.pixelSize() - 1)
+        text(QRectF(ix, r.y() + 50*k, iw, 80*k), ders, fd, '#7ff6ff' if sira else '#ffffff', Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap)
+        fh = font(16); hs = QFontMetrics(fh).elidedText(hoca, Qt.ElideRight, int(iw - (26*k if d == 'bitti' else 0)))
+        text(QRectF(ix, r.bottom() - 42*k, iw, 30*k), hs, fh, '#9fb3cc')
+        if d == 'bitti': text(QRectF(ix, r.bottom() - 42*k, iw, 30*k), '✓', font(20, True), '#3ef08a', Qt.AlignRight | Qt.AlignVCenter)
+        p.setOpacity(1)
+        if sira:
+            lab = 'ŞİMDİ' if d == 'simdi' else 'SIRADAKİ'; fl = font(14, True); lw = QFontMetrics(fl).horizontalAdvance(lab) + 26*k
+            pr = QRectF(r.center().x() - lw/2, r.y() - 14*k, lw, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#22e8ff')); p.drawRoundedRect(pr, 14*k, 14*k)
+            text(pr, lab, fl, '#06121f', Qt.AlignCenter)
+
 def draw_teneffus(p, W, H, k, font, tn):
     """Teneffüs modu ekranı (Atlas renkleri): büyük neon saat, tarih, şimdi/sıradaki ders, sıradaki sınava geri sayım, 5 iş günü takvim."""
     from PyQt5.QtGui import QFontMetrics
@@ -10924,6 +10991,15 @@ def draw_teneffus(p, W, H, k, font, tn):
         p.setPen(QPen(QColor('#22e8ff'), 3*k)); p.setBrush(QColor(6, 24, 40, 210)); p.drawRoundedRect(cd, 24*k, 24*k)
         text(QRectF(cd.x() + 34*k, cd.y() + 24*k, cd.width() - 68*k, 44*k), 'Teneffüs', font(34, True), '#7ff6ff')
         text(QRectF(cd.x() + 34*k, cd.y() + 80*k, cd.width() - 68*k, 120*k), 'Oyunlar, Günün soruları ve Atlas için\nsağ alttaki "Gizle"ye dokunun.', font(26, True), '#ffffff', Qt.AlignLeft | Qt.AlignTop)
+        if tn.get('dersler'):   # K-544: bugünkü dersler şeridi — hareketsiz; resim yalnız ders/boyut değişince yeniden çizilir
+            key = (int(W), int(H), tn.get('sinif'), tuple(tn['dersler']))
+            pm = _TN_SERIT.get('pm') if _TN_SERIT.get('key') == key else None
+            if pm is None:
+                pm = QPixmap(int(W), int(H - 370*k)); pm.fill(Qt.transparent); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setRenderHint(QPainter.TextAntialiasing)
+                try: draw_ders_seridi(q, W, k, font, tn['dersler'], tn.get('sinif', ''))
+                finally: q.end()
+                _TN_SERIT.update(key=key, pm=pm)
+            p.drawPixmap(QPointF(0, 370*k), pm)
         return
     cd = QRectF(W - 60*k - 600*k, 92*k, 600*k, 250*k)   # üst ortadaki arama düğmesinin altında
     for w_, a in ((16, 25), (8, 50)):
@@ -11387,6 +11463,79 @@ def tavla_play(st, mv):
     return n, hit
 def tavla_end_turn(st):
     n = dict(st); n['turn'] = 'b' if st['turn'] == 'w' else 'w'; n['dice'] = []; n['last'] = []; return n
+
+class DersProgramiEkran(QWidget):
+    """K-544: sınıfın haftalık ders programı. Tamamen hareketsiz: açılınca bir kez boyanır, zamanlayıcı yalnız 30 sn sonra kapatmak için.
+    Bugünün sütunu vurgulu, o anki/sıradaki ders çerçeveli, bugünün geçmiş dersleri soluk; Cuma 6–8. ders saatleri kutuda."""
+    GUN = ('Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma')
+    def __init__(self, main):
+        super().__init__(main); self.main = main; self.setAttribute(Qt.WA_OpaquePaintEvent, True); self.sinif = ''; self.now = None; self.hide()
+        self.kapat_t = QTimer(self); self.kapat_t.setSingleShot(True); self.kapat_t.timeout.connect(self.hide)
+    def ac(self, sinif, now):
+        self.sinif = sinif; self.now = now
+        self.setGeometry(self.main.rect()); self.show(); self.raise_(); self.update(); self.kapat_t.start(30000)
+    def mousePressEvent(self, e): self.kapat_t.stop(); self.hide()
+    def tabletEvent(self, e): e.accept(); self.kapat_t.stop(); self.hide()
+    def hideEvent(self, e): self.kapat_t.stop(); super().hideEvent(e)
+    def paintEvent(self, e):
+        from PyQt5.QtGui import QFont, QFontMetrics
+        fams = ui_fonts(); fam = fams.get('Poppins-Medium') or fams.get('Poppins-Regular') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+        p = QPainter(self); p.setRenderHint(QPainter.Antialiasing); p.setRenderHint(QPainter.TextAntialiasing)
+        W, H = self.width(), self.height(); k = min(W/1920, H/1080)
+        g = QLinearGradient(0, 0, 0, H); g.setColorAt(0, QColor('#0f1c2e')); g.setColorAt(1, QColor('#0a121e')); p.fillRect(self.rect(), g)
+        def font(px, bold=False): f = QFont(famb if bold else fam); f.setPixelSize(max(10, int(px*k))); return f
+        def text(r, s_, f, c, al=Qt.AlignLeft | Qt.AlignVCenter): p.setFont(f); p.setPen(QColor(c)); p.drawText(r, al, s_)
+        now = self.now; wd = now.weekday() if now else -1; t = (now.hour*3600 + now.minute*60 + now.second) if now else 0
+        bugun = {x[0]: x[4] for x in bugun_dersleri(self.sinif, now)} if now and wd < 5 else {}
+        # başlık
+        fT = font(40, True); tw = QFontMetrics(fT).horizontalAdvance(self.sinif); pill = QRectF(50*k, 26*k, tw + 48*k, 70*k)
+        draw_neon(p, pill, self.sinif, fT, '#22e8ff', k)
+        text(QRectF(pill.right() + 24*k, 26*k, 800*k, 70*k), 'Haftalık Ders Programı', font(36, True), '#ffffff')
+        sag = ''
+        if wd < 5:
+            sr = next(((n_, s_) for n_, s_ in bugun.items() if s_ in ('simdi', 'sira')), None)
+            if sr: c_ = lesson_cell(self.sinif, wd, sr[0]) or {}; sag = '%s · %s · %s: %d. Ders %s' % (self.GUN[wd], '%02d.%02d' % (now.hour, now.minute), 'Şimdi' if sr[1] == 'simdi' else 'Sıradaki', sr[0], c_.get('ders', ''))
+        text(QRectF(W/2, 26*k, W/2 - 140*k, 70*k), sag, font(22), '#9fb3cc', Qt.AlignRight | Qt.AlignVCenter)
+        xr = QRectF(W - 50*k - 64*k, 29*k, 64*k, 64*k); p.setPen(QPen(QColor(255, 255, 255, 90), 2*k)); p.setBrush(Qt.NoBrush); p.drawEllipse(xr); text(xr, '✕', font(28, True), '#ffffff', Qt.AlignCenter)
+        # tablo
+        L, T, R_, B = 50*k, 118*k, W - 50*k, H - 58*k; sw = 170*k; gx, gy = 10*k, 7*k; hh = 56*k
+        cw = (R_ - L - sw - 5*gx)/5; rh = (B - T - hh - 8*gy)/8
+        norm = [x for x in bell_periods(0) if x[3] == 'lesson' and x[0][0].isdigit()][:8]; cuma = [x for x in bell_periods(4) if x[3] == 'lesson' and x[0][0].isdigit()][:8]
+        hm = lambda x: '%02d.%02d' % (x//3600, x%3600//60)
+        for gi in range(5):
+            r = QRectF(L + sw + gx + gi*(cw + gx), T, cw, hh)
+            if gi == wd: p.setPen(Qt.NoPen); p.setBrush(QColor('#22e8ff')); p.drawRoundedRect(r, 14*k, 14*k)
+            text(r, self.GUN[gi] + ('  ·  Bugün' if gi == wd else ''), font(24, True), '#06121f' if gi == wd else '#c9d6ea', Qt.AlignCenter)
+        for ni in range(8):
+            y = T + hh + gy + ni*(rh + gy)
+            if ni < len(norm):
+                text(QRectF(L + 10*k, y + rh/2 - 30*k, sw, 30*k), '%d. Ders' % (ni + 1), font(21, True), '#ffffff')
+                text(QRectF(L + 10*k, y + rh/2, sw, 26*k), '%s – %s' % (hm(norm[ni][1]), hm(norm[ni][2])), font(16), '#9fb3cc')
+            for gi in range(5):
+                r = QRectF(L + sw + gx + gi*(cw + gx), y, cw, rh); c = lesson_cell(self.sinif, gi, ni + 1) or {}
+                d = bugun.get(ni + 1, '') if gi == wd else ''; sira = d in ('simdi', 'sira')
+                p.setOpacity(.35 if d == 'bitti' else 1)
+                if sira: p.setPen(QPen(QColor('#22e8ff'), 3*k)); p.setBrush(QColor(34, 232, 255, 40))
+                elif gi == wd: p.setPen(QPen(QColor(34, 232, 255, 75), 1.2*k)); p.setBrush(QColor(34, 232, 255, 18))
+                else: p.setPen(QPen(QColor(255, 255, 255, 20), 1*k)); p.setBrush(QColor(255, 255, 255, 13))
+                p.drawRoundedRect(r, 12*k, 12*k)
+                if c.get('ders'):
+                    p.setPen(Qt.NoPen); p.setBrush(QColor(ders_rengi(c['ders']))); p.drawRoundedRect(QRectF(r.x(), r.y() + 8*k, 5*k, r.height() - 16*k), 3*k, 3*k)
+                    fd = font(21, True); iw = r.width() - 34*k - (110*k if sira else 0)
+                    while fd.pixelSize() > 11 and QFontMetrics(fd).horizontalAdvance(c['ders']) > iw: fd.setPixelSize(fd.pixelSize() - 1)
+                    text(QRectF(r.x() + 20*k, r.y() + rh/2 - 30*k, iw, 30*k), c['ders'], fd, '#7ff6ff' if sira else '#ffffff')
+                    hs = ', '.join(ogretmen_adi(o) for o in (c.get('ogretmen') or [])); fh = font(15.5)
+                    text(QRectF(r.x() + 20*k, r.y() + rh/2, r.width() - 34*k, 26*k), QFontMetrics(fh).elidedText(hs, Qt.ElideRight, int(r.width() - 90*k)), fh, '#9fb3cc')
+                if gi == 4 and ni >= 5 and ni < len(cuma) and ni < len(norm) and cuma[ni][1] != norm[ni][1]:
+                    text(QRectF(r.x(), r.bottom() - 26*k, r.width() - 10*k, 22*k), hm(cuma[ni][1]), font(13), '#ffb26b', Qt.AlignRight | Qt.AlignVCenter)
+                p.setOpacity(1)
+                if sira:
+                    lab = 'ŞİMDİ' if d == 'simdi' else 'SIRADAKİ'; fl = font(13, True); lw = QFontMetrics(fl).horizontalAdvance(lab) + 22*k
+                    pr = QRectF(r.right() - 10*k - lw, r.y() + 8*k, lw, 24*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#22e8ff')); p.drawRoundedRect(pr, 12*k, 12*k)
+                    text(pr, lab, fl, '#06121f', Qt.AlignCenter)
+        text(QRectF(L, H - 50*k, W/2, 40*k), 'Cuma 6–8. ders saatleri farklıdır (turuncu saat)', font(18), '#6f819c')
+        text(QRectF(W/2, H - 50*k, W/2 - 50*k, 40*k), 'Dokununca ya da 30 saniye sonra kapanır', font(18), '#6f819c', Qt.AlignRight | Qt.AlignVCenter)
+        p.end()
 
 class GameScreen(QWidget):
     """Tam ekran oyun köşesi: iki öğrenci aynı tahtada oynar (dokun-seç-dokun-götür). Satranç · Dama · Tavla · Mangala · XOX."""
@@ -14833,7 +14982,8 @@ class OkulAraclari(QDialog):
                  ('Oyunlar', 'Oyunlar\nSatranç · Dama · Tavla · Mangala · XOX', True, self.oyun),
                  ('Okul araçları', 'Rastgele öğrenci\nTahtaya kim kalkacak?', True, self.rastgele),
                  ('Rehberlik', 'Rehberlik\nProje tercihi' + (' · Bilgi formu' if rh else ''), pj, self.rehberlik),
-                 ('Okul araçları', 'DBS yerleşimi\nDers Başarı Sınavı: fotoğraflı rastgele oturma', True, self.dbs))   # K-486   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
+                 ('Okul araçları', 'DBS yerleşimi\nDers Başarı Sınavı: fotoğraflı rastgele oturma', True, self.dbs),
+                 ('Takvim', 'Ders programı\nBu sınıfın haftalık programı', main.ders_programi_var(), self.ders_prog))   # K-544   # K-486   # proje seçimi Rehberlik'te; Atlas panelde (K-350)
         for i, (ic, txt, on, fn) in enumerate(items):
             b = QPushButton('  ' + txt); b.setFocusPolicy(Qt.NoFocus); b.setMinimumSize(340, 110)
             b.setIcon(QIcon(ATLAS_PNG) if ic == 'Atlas' else tool_icon(ic)); b.setIconSize(QSize(56, 56)); b.setEnabled(on)
@@ -14848,6 +14998,7 @@ class OkulAraclari(QDialog):
     def proje(self): self.accept(); QTimer.singleShot(0, self.main.open_proje)
     def rastgele(self): self.accept(); QTimer.singleShot(0, self.main.open_rastgele)
     def dbs(self): self.accept(); QTimer.singleShot(0, self.main.open_dbs)
+    def ders_prog(self): self.accept(); QTimer.singleShot(0, self.main.open_ders_programi)
     def atlas(self): self.accept(); QTimer.singleShot(0, lambda: self.main.atlas_sor_ac())
 
 class RehberlikMenu(QDialog):

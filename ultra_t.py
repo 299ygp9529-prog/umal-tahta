@@ -1,41 +1,37 @@
-import sys, subprocess, time, datetime
+import sys, os, subprocess, datetime, json
 sys.path.insert(0, '/usr/share/tahta-kalem')
 import tahta_kalem as tk
 tk.KELEBEK_URLS = (); tk.KELEBEK_FOTO_URLS = ()
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer
-from PyQt5.QtGui import QPixmap, QPainter, QColor
+# K-544 sınaması: sahte (uydurma) ders programı — gerçek öğretmen adı yok
+D = ['Matematik', 'Matematik', 'Türk Dili ve Edebiyatı', 'Fizik', 'İngilizce', 'İngilizce', 'Biyoloji', 'Tarih']
+H = ['Deneme Öğretmen BİR', 'Deneme Öğretmen BİR', 'Örnek Hoca İKİ', 'Test Öğretmen ÜÇ', 'Deneme DÖRT', 'Deneme DÖRT', 'Örnek BEŞ', 'Test ALTI']
+prog = {'9-A': {'%d-%d' % (g, n + 1): dict(ders=D[(n + g*3) % 8], ogretmen=[H[(n + g*3) % 8]]) for g in range(5) for n in range(8)}}
+open('/tmp/dp.json', 'w').write(json.dumps(dict(siniflar=prog), ensure_ascii=False))
+tk.LESSON_FILE = '/tmp/dp.json'; tk._LESSON_TABLE.clear()
 app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
 w = tk.Window(); w.showFullScreen(); app.processEvents()
-A = ['Deniz Yıldız','Ece Kara','Mert Aksoy','Zeynep Demir','Ali Çınar','Elif Su Aydın','Kerem Polat','Nil Öztürk','Can Arslan','Defne Koç','Emir Şahin','Ada Güneş','Bora Kılıç','İpek Yavuz','Onur Tekin','Selin Acar','Kaan Erdem','Duru Bulut','Arda Özkan','Mina Çelik','Efe Doğan','Lara Kurt','Tuna Aslan','Azra Nur Tunç','Yiğit Sarı','Asya Bozkurt','Umut Keskin','Naz Uçar','Baran Ateş','Ela Turan','Çınar Özer','Derin Şen','Alp Korkmaz','Muhammed Ali Yalçınkaya','Ece Naz Er','Lina Su']
-S = ['9-A','9-C','10-H','11-A','12-E','12-G','11-F','10-B']
-def foto(no):
-    pm = QPixmap(154, 200); pm.fill(QColor('#3a4f6e')); q = QPainter(pm); q.setRenderHint(QPainter.Antialiasing); q.setPen(tk.Qt.NoPen); q.setBrush(QColor('#9fb3cc')); q.drawEllipse(47, 40, 60, 60); q.drawEllipse(17, 120, 120, 140); q.end(); return pm
-tk.student_photo = foto
-liste = [dict(sira=i+1, no=str(500+i), ad=a.upper(), sinif=S[i % len(S)], ders='İNGİLİZCE') for i, a in enumerate(A)]
-pl = dict(tarih='2026-11-13', ders='6. Ders', sinav='İNGİLİZCE', salonlar={s: liste for s in ['9-A','9-B','9-C','9-D','10-A','10-B','11-H','12-I']})
-d = datetime.date(2026, 11, 13)
-w.upcoming_plans = lambda *a, **k: [(pl, d, '6. Ders', 44400, 46800, 44400), (pl, d, '7. Ders', 47400, 49800, 47400), (pl, datetime.date(2026,11,14), '3. Ders', 36000, 38400, 36000)]
+SAAT = datetime.datetime(2026, 11, 16, 10, 24)
+w.exam_clock = lambda: SAAT; w.exams = []; w.upcoming_plans = lambda *a, **k: []
 def cek(ad): app.processEvents(); subprocess.run(['import', '-window', 'root', '/tmp/onizleme/u-%s.png' % ad])
-g = [None]
+E = [None]
 def a1():
     for nm in ('welcome', 'intro'):
         x = getattr(w, nm, None)
         if x is not None: x.hide()
-    if not hasattr(w, 'exam_screen'): w.exam_screen = None
-    try: w.open_salons(); app.processEvents()
-    except Exception as e: print('salon HATA', e)
+    print('sinif', w.board_info().get('sinif'), 'program var:', w.ders_programi_var())
+    print('bugün:', tk.bugun_dersleri('9-A', SAAT))
+    w.last_touch = 0; st = w.exam_preview(); print('faz', st and st.get('phase'), 'dersler', st and len(st['tn'].get('dersler') or []))
+    E[0] = tk.ExamScreen(w); E[0].fit(w.scroll.viewport().rect()); E[0].set_state(st, '9'); E[0].show(); E[0].raise_()
 def a2():
-    cek('salonlar'); w.close_salons(); app.processEvents()
-    g[0] = tk.GraphDialog(w); g[0].show(); app.processEvents()
-    t = g[0].fields[1]; t.clear(); g[0].target = t
-    g[0].ekle('^(□)'); g[0].tus('3'); g[0].tus('▶'); g[0].tus('−'); g[0].tus('2'); g[0].tus('x')
-    g[0].fields[2].clear(); g[0].target = g[0].fields[2]; g[0].ekle('e^(□)'); g[0].tus('x'); g[0].tus('−'); g[0].tus('1')
-    print('alan 2:', g[0].fields[1].text(), '| derle:', tk.graph_compile(g[0].fields[1].text())[1], '| alan 3:', g[0].fields[2].text(), tk.graph_compile(g[0].fields[2].text())[1])
-    print('latex:', tk.grafik_latex(g[0].fields[1].text()))
+    cek('teneffus'); w.open_ders_programi(); app.processEvents()
 def a3():
-    cek('grafik-dialog'); g[0].reject(); app.processEvents()
-    w.atlas_sor_ac(); pn = w.atlas_panel; pn.grafik = ['x^2-4*x+3']; pn.cevap = 'Tepe noktası T(2, -1)'; pn.metin.setPlainText('1. Verilen fonksiyon $y = x^2 - 4x + 3$.', True); pn.tam_ekran(True); app.processEvents()
-def a4(): cek('atlas-tam'); app.quit()
-for t, f in ((1500, a1), (3500, a2), (5500, a3), (8000, a4)): QTimer.singleShot(t, f)
+    cek('program'); w.ders_prog.hide(); E[0].hide(); d = tk.OkulAraclari(w); d.show(); app.processEvents(); E.append(d)
+def a4():
+    cek('okul'); E[-1].reject()
+    tk.SAAT2 = datetime.datetime(2026, 11, 20, 13, 40)   # Cuma 7. ders sırasında
+    w.open_ders_programi.__func__; w.ders_prog.ac('9-A', datetime.datetime(2026, 11, 20, 13, 40)); app.processEvents()
+def a5(): cek('program-cuma'); app.quit()
+for t, f in ((1500, a1), (3500, a2), (5000, a3), (6500, a4), (8000, a5)): QTimer.singleShot(t, f)
 app.exec_()

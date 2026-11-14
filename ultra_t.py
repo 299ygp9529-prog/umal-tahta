@@ -4,6 +4,7 @@ import tahta_kalem as tk
 tk.KELEBEK_URLS = (); tk.KELEBEK_FOTO_URLS = ()
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer
+from PyQt5.QtGui import QPainter, QColor
 # K-544 sınaması: sahte (uydurma) ders programı — gerçek öğretmen adı yok
 D = ['Matematik', 'Matematik', 'Türk Dili ve Edebiyatı', 'Fizik', 'İngilizce', 'İngilizce', 'Biyoloji', 'Tarih']
 H = ['Deneme Öğretmen BİR', 'Deneme Öğretmen BİR', 'Örnek Hoca İKİ', 'Test Öğretmen ÜÇ', 'Deneme DÖRT', 'Deneme DÖRT', 'Örnek BEŞ', 'Test ALTI']
@@ -41,6 +42,20 @@ def a5():
     w.run_command({'id': 'sn-2', 'komut': 'sinif', 'cihaz': 'abc123', 'yeni': '13-Z'}); print('geçersiz sonrası:', w.board_info().get('sinif'))
     E.append(tk.PanelSettings(w)); E[-1].show(); app.processEvents()
 def a6(): cek('ayarlar'); E[-1].reject(); w.ask_class(True); app.processEvents()
-def a7(): cek('ayarlar-toast'); app.quit()
-for t, f in ((1500, a1), (3500, a2), (5000, a3), (6500, a4), (8000, a5), (9500, a6), (10500, a7)): QTimer.singleShot(t, f)
+def a7(): cek('ayarlar-toast')
+def a8():
+    pass
+    from PyQt5.QtGui import QImage, QFont
+    A = ['Deniz Yıldız','Ece Kara','Mert Aksoy','Zeynep Demir','Ali Çınar','Elif Su Aydın','Kerem Polat','Nil Öztürk','Can Arslan','Defne Koç','Muhammed Ali Yalçınkaya','Ada Güneş']
+    ogr = [dict(no=str(700+i), ad=a) for i, a in enumerate(A)]
+    a = dict(id='t1', ad='Deneme anketi', sorular=[dict(tur='secim', metin='Soru', secenekler=['Evet','Hayır'])], siniflar={'9-A': ogr})
+    ans = dict(cevaplar={o['no']: dict(zaman=1, c=['Evet']) for o in ogr[::2]})
+    im = QImage(1600, 900, QImage.Format_RGB32); im.fill(QColor('#0f1c2e')); p = QPainter(im); p.setRenderHint(QPainter.Antialiasing)
+    fams = tk.ui_fonts(); fam = fams.get('Poppins-Medium') or 'Sans'; famb = fams.get('Poppins-Bold') or fam
+    def font(px, bold=False): f = QFont(famb if bold else fam); f.setPixelSize(max(10, int(px))); return f
+    try: tk.draw_anket_list(p, 1600, 900, 1.0, font, a, '9-A', ans, 900)
+    except Exception as e: print('anket çizim HATA', e)
+    p.end(); im.save('/tmp/onizleme/u-anket-tik.png'); app.quit()
+
+for t, f in ((1500, a1), (3500, a2), (5000, a3), (6500, a4), (8000, a5), (9500, a6), (10500, a7), (11500, a8)): QTimer.singleShot(t, f)
 app.exec_()

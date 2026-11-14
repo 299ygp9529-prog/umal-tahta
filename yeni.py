@@ -2609,7 +2609,7 @@ class PanelSettings(QDialog):
         meter.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, self.main.start_pen_meter))); row.addWidget(meter)
         order = QPushButton('Düğmelerin yeri'); order.setToolTip('Paneldeki düğmeleri yukarı, aşağı, sağa, sola taşıyın')
         order.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, lambda: PanelOrder(self.main).exec_()))); row.addWidget(order)
-        cls = QPushButton(('Tahtanın sınıfı: %s  🔒' % main.board_info()['sinif']) if main.board_info().get('sinif') else 'Tahtanın sınıfı: seçilmedi')
+        cls = QPushButton(('Tahtanın sınıfı: %s · kilitli' % main.board_info()['sinif']) if main.board_info().get('sinif') else 'Tahtanın sınıfı: seçilmedi')
         cls.setToolTip('Sınıf seçildikten sonra yalnız Okul Paneli → Tahta Kontrol\'den değiştirilir' if main.board_info().get('sinif') else 'Okul yönetimi tahtayı bu adla görür')   # K-545
         cls.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, lambda: self.main.ask_class(True)))); row.addWidget(cls); row.addStretch()
         ok = QPushButton('Tamam'); ok.setObjectName('primary'); ok.clicked.connect(self.accept); row.addWidget(ok)
@@ -12017,6 +12017,14 @@ def anket_ders_uygun(a, now):
         if s_ <= t < e_: return (n in dl) if kind == 'lesson' else (last in dl)
         if n is not None: last = n
     return False
+def tik_rozet(p, ph, k, yer=None):
+    """K-546: dolduranın işareti — fotoğrafın üstüne binmez: fotoğrafa yeşil çerçeve, rozet adın yanında (yer)."""
+    p.setPen(QPen(QColor('#2fbf71'), 3*k)); p.setBrush(Qt.NoBrush); p.drawRoundedRect(ph.adjusted(-2*k, -2*k, 2*k, 2*k), 7*k, 7*k)
+    if yer is None: return
+    d = yer.height(); c_ = QRectF(yer)
+    p.setPen(QPen(QColor('#0d1726'), 2.5*k)); p.setBrush(QColor('#2fbf71')); p.drawEllipse(c_)
+    p.setPen(QPen(QColor('#ffffff'), max(2.5*k, d*.11), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)); x0, y0 = c_.x(), c_.y()
+    p.drawLine(QPointF(x0 + d*.27, y0 + d*.53), QPointF(x0 + d*.45, y0 + d*.70)); p.drawLine(QPointF(x0 + d*.45, y0 + d*.70), QPointF(x0 + d*.75, y0 + d*.33))
 def anket_tamam(a, sinif, answers):
     """Sınıfta katılacak herkes cevapladı mı."""
     exp = [r for r in anket_roster(a, sinif) if r[2]]; cev = (answers or {}).get('cevaplar') or {}
@@ -12574,18 +12582,16 @@ def draw_anket_list(p, W, H, k, font, a, sinif, answers, bottom):
         pw_ = min(ph.width(), ph.height()*0.78)   # K-481: fotoğraf dik (vesikalık) oranında durur; baş/çene kesilmez
         ph = QRectF(ph.center().x() - pw_/2, ph.y(), pw_, ph.height())
         draw_photo(p, ph, no, ad, k)
-        if dn or not ok:
-            p.setPen(Qt.NoPen); p.setBrush(QColor(13, 23, 38, 150 if dn else 200)); p.drawRoundedRect(ph, 6*k, 6*k)
-        fn_ = fN; nr = QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k, 36*k)   # K-481: ad kesilmez — sığmazsa küçülür, yine sığmazsa iki satır
+        if not ok:   # K-546: dolduranın fotoğrafı karartılmaz (yalnız katılmayanlar)
+            p.setPen(Qt.NoPen); p.setBrush(QColor(13, 23, 38, 200)); p.drawRoundedRect(ph, 6*k, 6*k)
+        fn_ = fN; nr = QRectF(r.x() + 4*k, r.bottom() - 38*k, r.width() - 8*k - (28*k if dn else 0), 36*k)   # K-481: ad kesilmez — sığmazsa küçülür, yine sığmazsa iki satır; K-546: tik için sağda yer
         for b_ in (15, 14, 13, 12):
             fn_ = fN if b_ == 15 else font(b_, True)
             if QFontMetrics(fn_).horizontalAdvance(ad) <= nr.width() - 4: break
         else: fn_ = font(11, True)
         text(nr, ad, fn_, '#ffffff' if ok else '#6f8099', Qt.AlignCenter | Qt.TextWordWrap)
         if dn:
-            c_ = QRectF(r.right() - 46*k, r.y() + 8*k, 38*k, 38*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#2fbf71')); p.drawEllipse(c_)
-            p.setPen(QPen(QColor('#06240f'), 4.5*k)); x0, y0 = c_.x(), c_.y()   # tik (yazı tipinden bağımsız)
-            p.drawLine(QPointF(x0 + 10*k, y0 + 20*k), QPointF(x0 + 17*k, y0 + 27*k)); p.drawLine(QPointF(x0 + 17*k, y0 + 27*k), QPointF(x0 + 29*k, y0 + 12*k))
+            tik_rozet(p, ph, k, QRectF(nr.right() + 2*k, nr.center().y() - 12*k, 24*k, 24*k))   # K-546: adın sağında
         if not ok:
             b = QRectF(r.x() + 8*k, ph.center().y() - 14*k, r.width() - 16*k, 28*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#0b1422')); p.drawRoundedRect(b, 7*k, 7*k)
             text(b, 'Katılmıyor', font(14, True), '#c9d6ea', Qt.AlignCenter)
@@ -13083,14 +13089,13 @@ def draw_proje_list(p, W, H, k, font, sinif, ros, d, bottom):
         ph_h = r.height() - (22 + 24*lines)*k; ph_w = min(r.width() - 14*k, ph_h*0.78)   # vesikalık oranı korunur (yüz kesilmez)
         ph = QRectF(r.center().x() - ph_w/2, r.y() + 7*k, ph_w, ph_h)
         draw_photo(p, ph, no, ad, k)
-        text(QRectF(r.x() + 4*k, ph.bottom() + 2*k, r.width() - 8*k, 26*k), QFontMetrics(fN).elidedText(ad, Qt.ElideRight, int(r.width() - 10*k)), fN, '#ffffff', Qt.AlignCenter)
+        ek_ = 28*k if (dn and dur != 'dagitildi') else 0   # K-546: tik için sağda yer
+        text(QRectF(r.x() + 4*k, ph.bottom() + 2*k, r.width() - 8*k - ek_, 26*k), QFontMetrics(fN).elidedText(ad, Qt.ElideRight, int(r.width() - 10*k - ek_)), fN, '#ffffff', Qt.AlignCenter)
         if dur == 'dagitildi':
             s_ = sonuc.get(no) or 'Yerleşmedi'
             text(QRectF(r.x() + 4*k, ph.bottom() + 28*k, r.width() - 8*k, 22*k), QFontMetrics(fS).elidedText(s_, Qt.ElideRight, int(r.width() - 10*k)), fS, '#ffe14d' if no in sonuc else '#ff6b6b', Qt.AlignCenter)
         elif dn:
-            c_ = QRectF(r.right() - 46*k, r.y() + 8*k, 38*k, 38*k); p.setPen(Qt.NoPen); p.setBrush(QColor('#2fbf71')); p.drawEllipse(c_)
-            p.setPen(QPen(QColor('#06240f'), 4.5*k)); x0, y0 = c_.x(), c_.y()
-            p.drawLine(QPointF(x0 + 10*k, y0 + 20*k), QPointF(x0 + 17*k, y0 + 27*k)); p.drawLine(QPointF(x0 + 17*k, y0 + 27*k), QPointF(x0 + 29*k, y0 + 12*k))
+            tik_rozet(p, ph, k, QRectF(r.right() - 4*k - 26*k, ph.bottom() + 3*k, 24*k, 24*k))   # K-546: adın sağında
         rects[(no, ad)] = r
     hint = {'kapali': 'Öğretmen kontenjanları belirleyip seçimi açınca fotoğrafına dokun', 'acik': 'Fotoğrafına dokun, 3 tercihini yap (değiştirmek için yine dokun)', 'dagitildi': 'Proje derslerin belli oldu'}.get(dur, '')
     text(QRectF(30*k, bottom - 58*k, W - 520*k, 48*k), hint, font(22), '#c9d6ea')

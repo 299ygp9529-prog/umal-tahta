@@ -32,6 +32,15 @@ def a4():
     cek('okul'); E[-1].reject()
     tk.SAAT2 = datetime.datetime(2026, 11, 20, 13, 40)   # Cuma 7. ders sırasında
     w.open_ders_programi.__func__; w.ders_prog.ac('9-A', datetime.datetime(2026, 11, 20, 13, 40)); app.processEvents()
-def a5(): cek('program-cuma'); app.quit()
-for t, f in ((1500, a1), (3500, a2), (5000, a3), (6500, a4), (8000, a5)): QTimer.singleShot(t, f)
+def a5():
+    cek('program-cuma'); w.ders_prog.hide(); del w.board_info
+    i_ = w.board_info(); i_['sinif'] = '9-A'; w.save_board_info(i_)
+    w.cihaz_kimligi = lambda: 'abc123'
+    w.run_command({'id': 'sn-baska', 'komut': 'sinif', 'cihaz': 'zzz', 'yeni': '11-C'}); print('başka cihaz sonrası:', w.board_info().get('sinif'))
+    w.run_command({'id': 'sn-1', 'komut': 'sinif', 'cihaz': 'abc123', 'yeni': '10-B', 'kim': 'İdare'}); print('komut sonrası:', w.board_info().get('sinif'), w.board_info().get('sinif_gecmis'))
+    w.run_command({'id': 'sn-2', 'komut': 'sinif', 'cihaz': 'abc123', 'yeni': '13-Z'}); print('geçersiz sonrası:', w.board_info().get('sinif'))
+    E.append(tk.PanelSettings(w)); E[-1].show(); app.processEvents()
+def a6(): cek('ayarlar'); E[-1].reject(); w.ask_class(True); app.processEvents()
+def a7(): cek('ayarlar-toast'); app.quit()
+for t, f in ((1500, a1), (3500, a2), (5000, a3), (6500, a4), (8000, a5), (9500, a6), (10500, a7)): QTimer.singleShot(t, f)
 app.exec_()

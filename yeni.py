@@ -2609,7 +2609,8 @@ class PanelSettings(QDialog):
         meter.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, self.main.start_pen_meter))); row.addWidget(meter)
         order = QPushButton('Düğmelerin yeri'); order.setToolTip('Paneldeki düğmeleri yukarı, aşağı, sağa, sola taşıyın')
         order.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, lambda: PanelOrder(self.main).exec_()))); row.addWidget(order)
-        cls = QPushButton('Tahtanın sınıfı: ' + (main.board_info().get('sinif') or 'seçilmedi')); cls.setToolTip('Okul yönetimi tahtayı bu adla görür')
+        cls = QPushButton(('Tahtanın sınıfı: %s  🔒' % main.board_info()['sinif']) if main.board_info().get('sinif') else 'Tahtanın sınıfı: seçilmedi')
+        cls.setToolTip('Sınıf seçildikten sonra yalnız Okul Paneli → Tahta Kontrol\'den değiştirilir' if main.board_info().get('sinif') else 'Okul yönetimi tahtayı bu adla görür')   # K-545
         cls.clicked.connect(lambda: (self.accept(), QTimer.singleShot(0, lambda: self.main.ask_class(True)))); row.addWidget(cls); row.addStretch()
         ok = QPushButton('Tamam'); ok.setObjectName('primary'); ok.clicked.connect(self.accept); row.addWidget(ok)
         for b in (reset, meter, order, cls, ok): b.setMinimumHeight(46); b.setMinimumWidth(150)
@@ -5538,6 +5539,11 @@ class Window(QMainWindow):
         picker.move(max(screen.left(),x),y);picker.show()
     # ---- Yönetim ----
     def board_info_path(self): return os.path.join(self.data_dir, 'tahta.json')
+    def cihaz_kimligi(self):
+        """K-545: havuz eşitleyicisinin cihaz kimliği (Okul Panelindeki umal_tahtalar.cihaz ile aynı)."""
+        try:
+            with open(os.path.join(self.data_dir, 'havuz', 'cihaz.txt')) as f: return f.read().strip()
+        except OSError: return ''
     def board_info(self):   # K-429: bellekten (arka planda denetlenir); ekran iş parçacığı diske gitmez
         d = arka_dosya().json(self.board_info_path(), {})
         return d if isinstance(d, dict) else {}
@@ -5546,6 +5552,8 @@ class Window(QMainWindow):
     def ask_class(self, force=False):
         info = self.board_info()
         if info.get('sinif') and not force: return
+        if info.get('sinif') and force:   # K-545: sınıf seçildikten sonra tahtadan değiştirilemez; yalnız Okul Paneli → Tahta Kontrol
+            self.show_toast('Bu tahtanın sınıfı: %s. Değiştirmek için Okul Paneli → Tahta Kontrol → Sınıfı değiştir.' % info['sinif']); return
         if getattr(self, 'screen_session', None) and getattr(self.screen_session, 'active', False): QTimer.singleShot(60000, self.ask_class); return
         d = ClassDialog(self, info.get('sinif', ''))
         if d.exec_() and d.value:
@@ -7094,6 +7102,14 @@ class Window(QMainWindow):
             if self.board_info().get('sinif') in CLASS_PLACES:
                 v_ = dict(c['yoklama']); v_.setdefault('kaynak', 'panel')
                 if v_.get('tarih') and v_.get('salon') and v_.get('ders') and isinstance(v_.get('gelmedi'), list): self.elle_yoklama_yaz(v_)
+        elif c.get('komut') == 'sinif':   # K-545: Okul Paneli → Tahta Kontrol → Sınıfı değiştir (yalnız hedef cihaz)
+            yeni = str(c.get('yeni') or '').strip(); ben = self.cihaz_kimligi()
+            gecerli_ = yeni in CLASS_PLACES or (yeni.split('-')[0] in CLASS_GRADES and yeni.split('-')[-1] in CLASS_BY_GRADE.get(yeni.split('-')[0], ''))
+            if gecerli_ and (not c.get('cihaz') or c.get('cihaz') == ben):
+                info = self.board_info(); eski = info.get('sinif', ''); info['sinif'] = yeni
+                info.setdefault('sinif_gecmis', []).append(dict(zaman=time.time(), eski=eski, yeni=yeni, kim=c.get('kim') or 'Okul Paneli'))
+                info['sinif_gecmis'] = info['sinif_gecmis'][-10:]; self.save_board_info(info)
+                self.show_toast('Bu tahtanın sınıfı Okul Panelinden %s olarak değiştirildi.' % yeni); QTimer.singleShot(1500, self.send_state)
         elif c.get('komut') == 'guncelle':   # Ayarlar'daki "Güncellemeyi denetle" ile aynı istek
             try:
                 with open(UPDATE_REQUEST, 'w') as f: f.write(str(time.time()))

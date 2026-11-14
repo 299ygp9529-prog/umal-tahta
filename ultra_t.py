@@ -13,7 +13,7 @@ tk.LESSON_FILE = '/tmp/dp.json'; tk._LESSON_TABLE.clear()
 app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
 w = tk.Window(); w.showFullScreen(); app.processEvents()
 SAAT = datetime.datetime(2026, 11, 16, 10, 24)
-w.exam_clock = lambda: SAAT; w.exams = []; w.upcoming_plans = lambda *a, **k: []
+w.exam_clock = lambda: SAAT; w.board_info = lambda: {'sinif': '9-A'}; w.exam_hidden = None; w.exams = []; w.upcoming_plans = lambda *a, **k: []
 def cek(ad): app.processEvents(); subprocess.run(['import', '-window', 'root', '/tmp/onizleme/u-%s.png' % ad])
 E = [None]
 def a1():
